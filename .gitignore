@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.pyc
+*.egg-info/
+.pytest_cache/
+.venv/
+venv/
+
+# Node (chart.js, pulled in by build_dashboard.py)
+node_modules/
+
+# OS cruft
+.DS_Store
+
+# Local Claude Code config (machine-specific permissions)
+.claude/settings.local.json

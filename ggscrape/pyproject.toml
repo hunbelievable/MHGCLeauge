@@ -1,0 +1,20 @@
+[project]
+name = "ggscrape"
+version = "0.1.0"
+description = "Scraper/CLI for Golf Genius 'league portal' sites (standings, rosters, player scorecards) — no login required, built for mhgc-tuesdaynightleague.golfgenius.com but written to work against any Golf Genius league portal with the same page templates."
+requires-python = ">=3.9"
+dependencies = [
+    "requests>=2.28",
+    "beautifulsoup4>=4.11",
+    "lxml>=4.9",
+]
+
+[project.scripts]
+ggscrape = "ggscrape.cli:main"
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["ggscrape*"]

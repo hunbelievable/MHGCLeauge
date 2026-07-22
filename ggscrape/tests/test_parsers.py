@@ -1,0 +1,129 @@
+"""Structural smoke tests, built from documented (not captured) markup.
+See fixtures_note.md — these prove the parsing logic is internally
+consistent, not that it matches Golf Genius's real HTML byte-for-byte.
+"""
+from ggscrape.parsers.standings import parse_standings
+from ggscrape.parsers.roster import parse_roster
+from ggscrape.parsers.player import parse_player
+
+STANDINGS_HTML = """
+<table>
+<tr><th>Number</th><th>Rank</th><th>Teams</th><th>Team Points</th>
+    <th>Team Participation Points</th><th>Total Points</th><th>Team Members</th></tr>
+<tr><td>1</td><td>1</td>
+    <td><a href="/widgets/customized_team_standings/team_info?team=999&teamset=1">Fricke, Jeff + Fries, Ryan</a></td>
+    <td>180.00</td><td>0.00</td><td>180.00</td><td>Fricke, Jeff | Fries, Ryan</td></tr>
+<tr><td>2</td><td>2</td>
+    <td><a href="/widgets/customized_team_standings/team_info?team=888&teamset=1">Haus, Greg + McWilliams, Matt</a></td>
+    <td>176.00</td><td>0.00</td><td>176.00</td><td>Haus, Greg | McWilliams, Matt</td></tr>
+<tr><td></td><td></td><td>Totals:</td><td>356.00</td><td>0.00</td><td>356.00</td><td></td></tr>
+</table>
+"""
+
+ROSTER_HTML = """
+<table>
+<tr><th>Player</th><th>Eagles or better</th><th>Birdies</th><th>Pars</th>
+    <th>Bogeys</th><th>Double Bogeys</th><th>Triple or worse</th></tr>
+<tr><td><a href="/widgets/player_stats/member_info?member_id=12345">Holiday, Rusty</a></td>
+    <td>0</td><td>3</td><td>18</td><td>36</td><td>20</td><td>13</td></tr>
+<tr><td>Totals</td><td>0</td><td>3</td><td>18</td><td>36</td><td>20</td><td>13</td></tr>
+</table>
+"""
+
+PLAYER_HTML = """
+<h4>Rusty Holiday</h4>
+<p>Low Net: <b>35.0</b></p>
+<p>Low Gross: <b>43.0</b></p>
+<p>Rounds Played: <b>11</b></p>
+<p>Handicap Index: <b>16.9</b></p>
+
+<table>
+<tr><th>Date</th><th>Round</th><th>Eagles or better</th><th>Birdies</th><th>Pars</th>
+    <th>Bogeys</th><th>Double Bogeys</th><th>Triple or worse</th></tr>
+<tr><td>May 5, 2026</td><td>Round 2</td><td>0</td><td>0</td><td>1</td><td>4</td><td>2</td><td>2</td></tr>
+<tr><td>May 12, 2026</td><td>Round 3</td><td>0</td><td>0</td><td>4</td><td>2</td><td>2</td><td>1</td></tr>
+</table>
+
+<!-- Real Golf Genius scorecard pages stack a Back-9 block and a Front-9
+     block in the SAME <table>, each with its own 'Hole' header row and its
+     own repeat of Course Par / League Average / Player Average / per-date
+     rows. This fixture mirrors that (see tests/fixtures_note.md) to catch
+     the bug where the second block's rows overwrote the first's. -->
+<table>
+<tr><td>[+]Miracle Hill (Blue - Men - Back 9)</td></tr>
+<tr><td>Hole</td><td>1</td><td>2</td><td>3</td><td>4</td><td>5</td><td>6</td><td>7</td><td>8</td><td>9</td>
+    <td>10</td><td>11</td><td>12</td><td>13</td><td>14</td><td>15</td><td>16</td><td>17</td><td>18</td></tr>
+<tr><td>Course Par</td>
+    <td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td>
+    <td>4</td><td>3</td><td>4</td><td>5</td><td>4</td><td>3</td><td>4</td><td>4</td><td>4</td></tr>
+<tr><td>League Average</td>
+    <td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td>
+    <td>4.9</td><td>4.1</td><td>4.9</td><td>5.9</td><td>5.0</td><td>4.0</td><td>5.4</td><td>5.2</td><td>5.0</td></tr>
+<tr><td>Player Average</td>
+    <td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td>
+    <td>5.8</td><td>6.0</td><td>5.0</td><td>5.6</td><td>4.6</td><td>4.4</td><td>5.2</td><td>4.6</td><td>5.8</td></tr>
+<tr><td>May 5, 2026</td>
+    <td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td>
+    <td>7</td><td>3</td><td>5</td><td>6</td><td>6</td><td>4</td><td>6</td><td>5</td><td>7</td></tr>
+<tr><td>[+]Miracle Hill (Blue - Men - Front 9)</td></tr>
+<tr><td>Hole</td><td>1</td><td>2</td><td>3</td><td>4</td><td>5</td><td>6</td><td>7</td><td>8</td><td>9</td>
+    <td>10</td><td>11</td><td>12</td><td>13</td><td>14</td><td>15</td><td>16</td><td>17</td><td>18</td></tr>
+<tr><td>Course Par</td>
+    <td>4</td><td>3</td><td>5</td><td>4</td><td>4</td><td>3</td><td>4</td><td>5</td><td>3</td>
+    <td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+<tr><td>League Average</td>
+    <td>5.4</td><td>3.9</td><td>6.0</td><td>5.1</td><td>5.1</td><td>4.0</td><td>5.0</td><td>5.9</td><td>4.0</td>
+    <td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+<tr><td>Player Average</td>
+    <td>5.5</td><td>3.8</td><td>6.5</td><td>5.7</td><td>6.3</td><td>4.2</td><td>4.8</td><td>6.0</td><td>4.0</td>
+    <td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+<tr><td>May 12, 2026</td>
+    <td>5</td><td>4</td><td>7</td><td>6</td><td>9</td><td>3</td><td>4</td><td>5</td><td>3</td>
+    <td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+</table>
+"""
+
+
+def test_standings():
+    teams = parse_standings(STANDINGS_HTML)
+    assert len(teams) == 2
+    assert teams[0].name == "Fricke, Jeff + Fries, Ryan"
+    assert teams[0].team_points == 180.0
+    assert teams[0].team_id == "999"
+    assert teams[0].members == ["Fricke, Jeff", "Fries, Ryan"]
+
+
+def test_roster():
+    players = parse_roster(ROSTER_HTML)
+    assert len(players) == 1
+    assert players[0].name == "Holiday, Rusty"
+    assert players[0].member_id == "12345"
+    assert players[0].bogeys == 36
+
+
+def test_player():
+    p = parse_player(PLAYER_HTML)
+    assert p.hcp_index == 16.9
+    assert p.low_gross == 43.0
+    assert len(p.scoring) == 2
+    assert p.scoring[0].round_num == 2
+
+    # Back-9 and Front-9 blocks share one <table> — both must survive intact,
+    # not have the second block's rows clobber the first's.
+    assert "back" in p.course and "front" in p.course
+    assert p.course["back"].par == [4, 3, 4, 5, 4, 3, 4, 4, 4]
+    assert p.course["front"].par == [4, 3, 5, 4, 4, 3, 4, 5, 3]
+
+    assert len(p.hole_rounds) == 2
+    by_round = {h.round_num: h for h in p.hole_rounds}
+    assert by_round[2].nine == "Back"
+    assert sum(by_round[2].holes) == 49
+    assert by_round[3].nine == "Front"
+    assert sum(by_round[3].holes) == 46
+
+
+if __name__ == "__main__":
+    test_standings()
+    test_roster()
+    test_player()
+    print("ALL STRUCTURAL SMOKE TESTS PASSED")

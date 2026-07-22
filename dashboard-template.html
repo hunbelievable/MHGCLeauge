@@ -1,0 +1,609 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Tuesday Night League — Dashboard</title>
+<script>/*__CHARTJS__*/</script>
+<style>
+:root{
+  --bg:#0e1512; --panel:#16211c; --panel2:#1c2a23; --line:#2a3d33;
+  --text:#e8f0eb; --muted:#8fa89b; --green:#4caf7d; --gold:#e8c468; --red:#e07a6b; --blue:#6aa9e0;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;padding-bottom:60px}
+.wrap{max-width:1100px;margin:0 auto;padding:0 16px}
+header{background:linear-gradient(160deg,#14251c,#0e1512);border-bottom:1px solid var(--line);padding:26px 0 18px}
+header h1{font-size:1.5rem;letter-spacing:.02em}
+header .sub{color:var(--muted);font-size:.85rem;margin-top:4px}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin:18px 0 4px}
+.kpi{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px 14px}
+.kpi .v{font-size:1.5rem;font-weight:700;color:var(--green)}
+.kpi .v.gold{color:var(--gold)}
+.kpi .l{color:var(--muted);font-size:.75rem;margin-top:2px;text-transform:uppercase;letter-spacing:.06em}
+nav{position:sticky;top:0;background:rgba(14,21,18,.95);backdrop-filter:blur(6px);border-bottom:1px solid var(--line);z-index:10}
+nav .wrap{display:flex;gap:4px;overflow-x:auto;padding:8px 16px}
+nav button{background:none;border:1px solid transparent;color:var(--muted);padding:8px 14px;border-radius:20px;cursor:pointer;font-size:.9rem;white-space:nowrap}
+nav button.active{background:var(--panel2);color:var(--text);border-color:var(--line)}
+section{display:none;padding-top:20px}
+section.visible{display:block}
+h2{font-size:1.05rem;margin:18px 0 10px;color:var(--gold);letter-spacing:.03em}
+.note{color:var(--muted);font-size:.8rem;margin:6px 0 12px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px;margin-bottom:16px}
+.chartbox{position:relative;height:340px}
+.chartbox.tall{height:420px}
+table{width:100%;border-collapse:collapse;font-size:.87rem}
+th,td{padding:7px 10px;text-align:left;border-bottom:1px solid var(--line)}
+th{color:var(--muted);font-size:.75rem;text-transform:uppercase;letter-spacing:.05em;cursor:pointer;user-select:none;white-space:nowrap}
+th.sorted{color:var(--gold)}
+td.num,th.num{text-align:right}
+tr.me{background:rgba(76,175,125,.12)}
+tr.me td{font-weight:600}
+.rankpill{display:inline-block;min-width:26px;text-align:center;background:var(--panel2);border-radius:8px;padding:2px 6px;font-size:.8rem}
+.w{color:var(--green);font-weight:700}.l{color:var(--red);font-weight:700}.t{color:var(--gold);font-weight:700}
+input[type=text]{background:var(--panel2);border:1px solid var(--line);color:var(--text);padding:8px 12px;border-radius:8px;width:100%;max-width:320px;margin-bottom:10px;font-size:.9rem}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+@media(max-width:820px){.grid2{grid-template-columns:1fr}}
+.holes{overflow-x:auto}
+.holes table{font-size:.8rem}
+.holes td{text-align:center;padding:5px 6px;min-width:34px}
+.holes th{text-align:center}
+.sc-eagle{background:#b8860b;color:#fff;border-radius:6px}
+.sc-birdie{background:#2e7d52;color:#fff;border-radius:6px}
+.sc-par{background:#274434;border-radius:6px}
+.sc-bogey{background:#5c4a33;border-radius:6px}
+.sc-double{background:#6e3b32;border-radius:6px}
+.sc-triple{background:#8b2f24;color:#fff;border-radius:6px}
+.legend{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0;font-size:.75rem;color:var(--muted)}
+.legend span{display:inline-flex;align-items:center;gap:5px}
+.legend i{width:14px;height:14px;border-radius:4px;display:inline-block}
+.next{border-left:3px solid var(--gold);padding:10px 14px;background:var(--panel2);border-radius:0 10px 10px 0;margin-bottom:16px;font-size:.92rem}
+.pills{display:flex;gap:6px;margin:0 0 14px;flex-wrap:wrap}
+.pills button{background:var(--panel);border:1px solid var(--line);color:var(--muted);padding:6px 16px;border-radius:18px;cursor:pointer;font-size:.85rem}
+.pills button.on{background:var(--green);color:#0e1512;border-color:var(--green);font-weight:600}
+select{background:var(--panel2);border:1px solid var(--line);color:var(--text);padding:8px 12px;border-radius:8px;font-size:.9rem}
+.picker{display:flex;align-items:center;gap:8px;margin-bottom:14px;flex-wrap:wrap}
+.picker label{color:var(--muted);font-size:.85rem}
+footer{color:var(--muted);font-size:.75rem;text-align:center;margin-top:30px}
+a{color:var(--blue)}
+</style>
+</head>
+<body>
+<script>const DATA = /*__DATA__*/;</script>
+<header>
+  <div class="wrap">
+    <h1>⛳ Tuesday Night League</h1>
+    <div class="sub" id="subhead"></div>
+    <div class="picker" style="margin-top:14px">
+      <label>Team:</label><select id="banner-team-select"></select>
+      <label style="margin-left:10px">Player:</label><select id="banner-player-select"></select>
+    </div>
+    <div class="kpis" id="kpis-team"></div>
+    <div class="kpis" id="kpis-player" style="margin-top:8px"></div>
+  </div>
+</header>
+<nav><div class="wrap">
+  <button data-t="overview" class="active">Standings</button>
+  <button data-t="playoffs">Playoffs</button>
+  <button data-t="race">Points Race</button>
+  <button data-t="team">Team</button>
+  <button data-t="player">Player</button>
+  <button data-t="latest">Latest Round</button>
+  <button data-t="players">Player Stats</button>
+  <button data-t="rules">Rules</button>
+</div></nav>
+<div class="wrap">
+
+<section id="overview" class="visible">
+  <h2>Callaway Division</h2>
+  <div class="card"><table id="tbl-cal"></table></div>
+  <h2>Titleist Division <span style="color:var(--muted);font-weight:normal;font-size:.75rem">(as of <span id="tit-asof"></span> — not actively refreshed)</span></h2>
+  <div class="card"><table id="tbl-tit"></table></div>
+</section>
+
+<section id="playoffs">
+  <div class="pills" id="playoff-pills"><button data-d="cal" class="on">Callaway</button><button data-d="tit">Titleist</button></div>
+  <div id="playoff-cal">
+  <div class="next" id="playoff-summary"></div>
+  <h2>Shootout Projection — Callaway Division</h2>
+  <p class="note" id="playoff-note"></p>
+  <div class="card"><table id="tbl-playoffs"></table></div>
+  </div>
+  <div id="playoff-tit" style="display:none">
+  <h2>Shootout Race — Titleist Division (current standings)</h2>
+  <p class="note">Week-by-week histories for Titleist teams aren't exposed on the public site pages I can reach, so this shows the current top of the division rather than a drop-2 projection. The gold line marks the top-7 cut as it stands today.</p>
+  <div class="card"><table id="tbl-playoffs-tit"></table></div>
+  </div>
+  <h2>How the cut works</h2>
+  <div class="card" style="font-size:.9rem;line-height:1.6">
+    <p>The season runs 15 scoring weeks (Rounds 2–16, May 5 – Aug 11). Golf Genius keeps each team's <b>best 13 of 15</b> weekly point totals — the two lowest weeks are dropped. The <b>top 7 teams in each division</b> after drops advance to the shootout on <b>Tue, August 18</b> (true alternate shot, 2 teams eliminated every 2 holes, division winners meet in a 3-hole aggregate final).</p>
+    <p style="margin-top:8px;color:var(--muted)">Projection method: each team's remaining rounds are assumed at their current weekly average, then the best 13 of the resulting 15 weeks are summed. "If drops applied today" simply removes each team's two worst weeks so far.</p>
+  </div>
+</section>
+
+<section id="race">
+  <div class="picker"><label>Highlight team:</label><select id="race-team-select"></select></div>
+  <h2>Season Points Race — Callaway</h2>
+  <p class="note">Top 8 by current points, plus your selected team if it's outside the top 8.</p>
+  <div class="card"><div class="chartbox tall"><canvas id="ch-race"></canvas></div></div>
+  <h2>Weekly Points</h2>
+  <div class="card"><div class="chartbox"><canvas id="ch-weekly"></canvas></div></div>
+</section>
+
+<section id="team">
+  <div class="picker"><label>Team:</label><select id="team-select"></select></div>
+  <div class="next" id="team-summary"></div>
+  <h2>Weekly Points Trend</h2>
+  <div class="card"><div class="chartbox"><canvas id="ch-team-weekly"></canvas></div></div>
+  <h2 id="team-detail-h">Weekly Results</h2>
+  <div class="card"><table id="tbl-team-detail"></table></div>
+  <h2>Upcoming Rounds</h2>
+  <div class="card"><table id="tbl-upcoming"></table></div>
+</section>
+
+<section id="player">
+  <div class="picker"><label>Player:</label><select id="player-select"></select></div>
+
+  <div id="player-detail-view">
+    <div class="kpis" id="player-kpis" style="margin-bottom:16px"></div>
+    <div class="grid2">
+      <div class="card"><h2 style="margin-top:0">Gross Score by Round (9 holes, par 35)</h2><div class="chartbox"><canvas id="ch-gross"></canvas></div></div>
+      <div class="card"><h2 style="margin-top:0">Scoring Mix by Round</h2><div class="chartbox"><canvas id="ch-dist"></canvas></div></div>
+    </div>
+    <h2>Hole-by-Hole Scorecards</h2>
+    <div class="legend">
+      <span><i class="sc-birdie"></i>Birdie</span><span><i class="sc-par"></i>Par</span>
+      <span><i class="sc-bogey"></i>Bogey</span><span><i class="sc-double"></i>Double</span><span><i class="sc-triple"></i>Triple+</span>
+    </div>
+    <div class="card holes" id="scorecards"></div>
+    <h2>Player vs the League (average by hole)</h2>
+    <div class="grid2">
+      <div class="card"><h2 style="margin-top:0;color:var(--text);font-size:.9rem">Front 9</h2><div class="chartbox"><canvas id="ch-front"></canvas></div></div>
+      <div class="card"><h2 style="margin-top:0;color:var(--text);font-size:.9rem">Back 9</h2><div class="chartbox"><canvas id="ch-back"></canvas></div></div>
+    </div>
+  </div>
+
+  <div id="player-basic-view" style="display:none">
+    <div class="card"><h2 style="margin-top:0">Season Scoring Mix</h2><div class="chartbox"><canvas id="ch-player-basic"></canvas></div></div>
+    <p class="note" id="player-basic-note"></p>
+  </div>
+</section>
+
+<section id="latest">
+  <h2 id="latest-h"></h2>
+  <p class="note">Callaway team points earned in the most recent round.</p>
+  <div class="card"><table id="tbl-r13"></table></div>
+</section>
+
+<section id="players">
+  <h2>Season Player Analytics</h2>
+  <p class="note">Hole outcomes across all rounds this season. Click a column to sort; type to filter. Division is based on team rosters — fill-in subs are listed under "Sub / fill-in".</p>
+  <input type="text" id="pfilter" placeholder="Search player…"><select id="pdiv" style="margin-left:10px"><option value="cal" selected>Callaway</option><option value="tit">Titleist</option><option value="sub">Sub / fill-in</option><option value="all">All divisions</option></select>
+  <div class="card"><table id="tbl-players"></table></div>
+</section>
+
+<section id="rules">
+  <h2>2026 League Format &amp; Rules (from the handbook)</h2>
+  <div class="grid2">
+    <div class="card" style="font-size:.9rem;line-height:1.7">
+      <h2 style="margin-top:0">Season Schedule</h2>
+      <p>• <b>Apr 28</b> — Welcome Fun Night (scramble, tee gift; doesn't count)<br>
+      • <b>May 5 – Aug 11</b> — 15-week points race (Rounds 2–16), match play<br>
+      • <b>Aug 18</b> — Shootout for top 7 teams per division<br>
+      • <b>Best 13 of 15 weeks</b> count toward the season total (2 drops; rainouts reduce to best 13 of 14, then 13 of 13)</p>
+      <h2>Weekly Scoring — 27 points per match</h2>
+      <p>• <b>A vs A</b> (lower handicaps): 9 pts, 1 per hole (win 1 / tie ½ / loss 0)<br>
+      • <b>B vs B</b> (higher handicaps): 9 pts, same per-hole scoring<br>
+      • <b>Team total vs team total</b>: 9 pts, same per-hole scoring</p>
+      <h2>No-shows</h2>
+      <p>• Missing player: opponent plays vs <b>net par</b> (absent side earns 0 for that match); the short-handed team also can't earn team-total points<br>
+      • Missing team: present team plays vs par; absent team gets 0 for the week</p>
+    </div>
+    <div class="card" style="font-size:.9rem;line-height:1.7">
+      <h2 style="margin-top:0">Handicaps</h2>
+      <p>• GHIN handicaps, updated every Monday before league play<br>
+      • Max playing handicap: <b>18 strokes for 9 holes</b><br>
+      • Subs use their GHIN, otherwise play scratch; sub name + GHIN due 24 hours ahead (Mon 5:30 PM) or they play scratch</p>
+      <h2>Play Rules</h2>
+      <p>• Men play Blue tees, Ladies play Red<br>
+      • Ball played down; OB or lost ball: re-hit +1 or drop +2<br>
+      • Everything holed out — no gimmes</p>
+      <h2>Shootout (Aug 18)</h2>
+      <p>• Top 7 per division; original roster only, spots confirmed by Wed 5:30 PM after the final night<br>
+      • <b>True alternate shot</b>; same ball until lost, no swapping<br>
+      • 2 teams eliminated every 2 holes: 7 → 5 → 3 → 1 after six holes<br>
+      • Division winners play a 3-hole aggregate for the overall title; payouts on elimination</p>
+    </div>
+  </div>
+</section>
+
+</div>
+<footer>Data scraped from <a href="https://mhgc-tuesdaynightleague.golfgenius.com/">Golf Genius (GGID WCD5CH)</a> · Last updated <span id="upd"></span> · Ask Claude to refresh after each week's round.</footer>
+
+<script>
+const M = DATA.meta, ME = DATA.myTeam;
+const rl = M.roundLabels.map(s=>s.split("\n"));
+document.getElementById('subhead').textContent = `${M.club} · through ${M.throughRound} · GGID ${M.ggid}`;
+document.getElementById('upd').textContent = M.lastUpdated;
+document.getElementById('tit-asof').textContent = M.titleistAsOf || '';
+
+// ---- KPIs (reactive to the Team/Player pivot selected below) ----
+function renderBannerTeam(name){
+  const t = DATA.teams.find(x=>x.name===name);
+  const kp = [
+    [`#${t.rank}`, `${shortName(name)} · Rank`, 'gold'],
+    [t.total.toFixed(1), `${shortName(name)} · Points`],
+  ];
+  document.getElementById('kpis-team').innerHTML = kp.map(k=>`<div class="kpi"><div class="v ${k[2]||''}">${k[0]}</div><div class="l">${k[1]}</div></div>`).join('');
+}
+function renderBannerPlayer(name){
+  const pd = DATA.playerDetail[name];
+  let kp;
+  if (pd){
+    const grosses = pd.rounds.map(r=>r.holes.reduce((a,b)=>a+b,0));
+    kp = [
+      [pd.hcpIndex.toFixed(1), `${name.split(',')[0]} · Handicap`],
+      [(grosses.reduce((a,b)=>a+b,0)/grosses.length).toFixed(1), 'Avg Gross (9)'],
+      [pd.lowGross, 'Low Gross'],
+      [pd.lowNet.toFixed(0), 'Low Net'],
+    ];
+  } else {
+    const row = DATA.playerStats.find(p=>p[0]===name);
+    kp = row ? [
+      [row[2], `${name.split(',')[0]} · Birdies`],
+      [row[3], 'Pars'],
+      [row[4], 'Bogeys'],
+      [row[5]+row[6], 'Double+'],
+    ] : [['—','No stats yet']];
+  }
+  document.getElementById('kpis-player').innerHTML = kp.map(k=>`<div class="kpi"><div class="v ${k[2]||''}">${k[0]}</div><div class="l">${k[1]}</div></div>`).join('');
+}
+
+// ---- Tabs ----
+document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{
+  document.querySelectorAll('nav button').forEach(x=>x.classList.remove('active'));
+  document.querySelectorAll('section').forEach(x=>x.classList.remove('visible'));
+  b.classList.add('active');
+  document.getElementById(b.dataset.t).classList.add('visible');
+});
+
+// ---- Standings tables ----
+function standingsTableSimple(el, rows){
+  el.innerHTML = `<thead><tr><th>#</th><th>Team</th><th class="num">Total Points</th></tr></thead><tbody>` +
+    rows.map((r,i)=>`<tr${r[0]===ME.name?' class="me"':''}><td><span class="rankpill">${i+1}</span></td><td>${r[0]}</td><td class="num">${r[1].toFixed(1)}</td></tr>`).join('')+`</tbody>`;
+}
+function standingsTable4(el, rows){
+  el.innerHTML = `<thead><tr><th>#</th><th>Team</th><th class="num">Total</th><th class="num">AvA/BvB</th><th class="num">ABvAB</th></tr></thead><tbody>` +
+    rows.map((r,i)=>`<tr><td><span class="rankpill">${i+1}</span></td><td>${r[0]}</td><td class="num">${r[1].toFixed(1)}</td><td class="num">${r[2].toFixed(1)}</td><td class="num">${r[3].toFixed(1)}</td></tr>`).join('')+`</tbody>`;
+}
+standingsTableSimple(document.getElementById('tbl-cal'), DATA.standings.callaway);
+standingsTable4(document.getElementById('tbl-tit'), DATA.standings.titleist);
+
+// ---- Division membership ----
+const CAL = new Set(DATA.standings.callaway.map(r=>r[0]));
+const TIT = new Set(DATA.standings.titleist.map(r=>r[0]));
+const teamDiv = t => CAL.has(t) ? 'cal' : TIT.has(t) ? 'tit' : 'sub';
+const playerDiv = {};
+const callawayPlayers = [];
+for (const [rows, d] of [[DATA.standings.callaway,'cal'], [DATA.standings.titleist,'tit']])
+  rows.forEach(r => r[0].split(' + ').forEach(p => {
+    p = p.trim();
+    playerDiv[p] = d;
+    if (d==='cal') callawayPlayers.push(p);
+  }));
+callawayPlayers.sort();
+const DIVNAME = {cal:'Callaway', tit:'Titleist', sub:'Sub / fill-in'};
+
+function wirePills(id, fn){
+  const box = document.getElementById(id);
+  box.querySelectorAll('button').forEach(b => b.onclick = () => {
+    box.querySelectorAll('button').forEach(x=>x.classList.remove('on'));
+    b.classList.add('on'); fn(b.dataset.d);
+  });
+}
+
+// ---- Chart helper (destroys prior instance on same canvas so pivots can re-render) ----
+const chartInstances = {};
+function mkChart(id, cfg){
+  try {
+    if (chartInstances[id]) { chartInstances[id].destroy(); delete chartInstances[id]; }
+    const inst = new Chart(document.getElementById(id), cfg);
+    chartInstances[id] = inst;
+    return inst;
+  } catch(e){
+    console.error('chart failed:', id, e);
+    const el = document.getElementById(id);
+    if(el && el.parentNode) el.parentNode.innerHTML = '<p style="color:var(--muted);padding:20px">Chart could not render ('+e.message+')</p>';
+  }
+}
+try{
+  Chart.defaults.color = '#8fa89b';
+  Chart.defaults.borderColor = '#2a3d33';
+  Chart.defaults.font.size = 11;
+}catch(e){console.error('Chart.js missing', e);}
+const palette = ['#e8c468','#6aa9e0','#b58ce0','#4caf7d','#e07a6b','#5fc9c4','#d087b5','#9aa85f'];
+const shortName = t => t.replace(/, \w[\w ]* \+ /,'/').replace(/, \w[\w ]*$/,'');
+
+// ---- Playoff projection engine (used by Playoffs tab AND Team tab) ----
+function computeProjections(){
+  const S = M.season, remain = S.scoringWeeks - S.playedWeeks;
+  const rows = Object.entries(DATA.callawayWeekly).map(([team, wk])=>{
+    const total = wk.reduce((a,b)=>a+b,0);
+    const avg = total / wk.length;
+    const sorted = [...wk].sort((a,b)=>a-b);
+    const drops = sorted.slice(0, S.dropCount);
+    const drop2now = total - drops.reduce((a,b)=>a+b,0);
+    const all15 = [...wk, ...Array(remain).fill(avg)].sort((a,b)=>a-b);
+    const proj = all15.slice(S.dropCount).reduce((a,b)=>a+b,0);
+    return {team, total, avg, drops, drop2now, proj};
+  });
+  rows.sort((a,b)=>b.proj-a.proj);
+  return rows;
+}
+const PROJ = computeProjections();
+const PROJ_BY_TEAM = Object.fromEntries(PROJ.map((r,i)=>[r.team, {...r, projRank:i+1}]));
+const CUT = PROJ[M.season.playoffSpots-1].proj;
+
+// ---- Playoffs tab render ----
+(function(){
+  const S = M.season, remain = S.scoringWeeks - S.playedWeeks;
+  const meIdx = PROJ.findIndex(r=>r.team===ME.name);
+  const me = PROJ[meIdx];
+  document.getElementById('playoff-summary').innerHTML =
+    `<b>Projected: ${meIdx<S.playoffSpots?'IN the shootout':'OUT'}</b> — your team projects ${meIdx+1}${['st','nd','rd'][meIdx]||'th'} at ${me.proj.toFixed(1)} pts after drops (cut line ≈ ${CUT.toFixed(1)}). Your drop weeks so far: ${me.drops.map(d=>d.toFixed(1)).join(' and ')}.`;
+  document.getElementById('playoff-note').textContent =
+    `${S.playedWeeks} of ${S.scoringWeeks} scoring weeks played, ${remain} to go. Top ${S.playoffSpots} after drops advance to the ${S.shootoutDate} shootout.`;
+  document.getElementById('tbl-playoffs').innerHTML =
+    `<thead><tr><th>Proj #</th><th>Team</th><th class="num">Current</th><th class="num">Avg/wk</th><th class="num">Drop weeks</th><th class="num">If drops applied today</th><th class="num">Projected final (13 of 15)</th><th class="num">vs cut</th></tr></thead><tbody>`+
+    PROJ.map((r,i)=>{
+      const d = r.proj - CUT;
+      const cls = r.team===ME.name?' class="me"':'';
+      const cutRow = i===S.playoffSpots-1 ? ' style="border-bottom:2px solid var(--gold)"' : '';
+      return `<tr${cls}${cutRow}><td><span class="rankpill">${i+1}</span></td><td>${r.team}${i<S.playoffSpots?' <span title="projected in" style="color:var(--gold)">★</span>':''}</td><td class="num">${r.total.toFixed(1)}</td><td class="num">${r.avg.toFixed(1)}</td><td class="num" style="color:var(--muted)">${r.drops.map(x=>x.toFixed(1)).join(', ')}</td><td class="num">${r.drop2now.toFixed(1)}</td><td class="num"><b>${r.proj.toFixed(1)}</b></td><td class="num ${d>=0?'w':'l'}">${d>=0?'+':''}${d.toFixed(1)}</td></tr>`;
+    }).join('')+`</tbody>`;
+})();
+wirePills('playoff-pills', d => {
+  document.getElementById('playoff-cal').style.display = d==='cal' ? '' : 'none';
+  document.getElementById('playoff-tit').style.display = d==='tit' ? '' : 'none';
+});
+document.getElementById('tbl-playoffs-tit').innerHTML =
+  `<thead><tr><th>#</th><th>Team</th><th class="num">Current Points</th><th class="num">Behind 7th</th></tr></thead><tbody>`+
+  DATA.standings.titleist.map((r,i)=>{
+    const seventh = DATA.standings.titleist[6][1];
+    const gap = r[1]-seventh;
+    const cutRow = i===6 ? ' style="border-bottom:2px solid var(--gold)"' : '';
+    return `<tr${cutRow}><td><span class="rankpill">${i+1}</span></td><td>${r[0]}${i<7?' <span style="color:var(--gold)">★</span>':''}</td><td class="num">${r[1].toFixed(1)}</td><td class="num ${gap>=0?'w':'l'}">${gap>=0?'+':''}${gap.toFixed(1)}</td></tr>`;
+  }).join('')+`</tbody>`;
+
+// ---- Points Race tab (pivotable highlight) ----
+const teamSelectOptionsHTML = DATA.teams.map(t=>`<option value="${t.name}">#${t.rank} — ${t.name}</option>`).join('');
+const raceTeamSelect = document.getElementById('race-team-select');
+raceTeamSelect.innerHTML = teamSelectOptionsHTML;
+raceTeamSelect.value = ME.name;
+
+function renderRace(highlightName){
+  const byTotal = [...DATA.teams].sort((a,b)=>b.total-a.total);
+  let chosen = byTotal.slice(0,8);
+  if (!chosen.some(t=>t.name===highlightName)){
+    chosen = chosen.slice(0,7).concat(DATA.teams.find(t=>t.name===highlightName));
+  }
+  const raceDs = chosen.map((t,i)=>{
+    let c=0; const cum=t.weekly.map(w=>+(c+=w).toFixed(1));
+    const hi = t.name===highlightName;
+    return {label:shortName(t.name), data:cum,
+      borderColor: hi?'#4caf7d':palette[i%palette.length], backgroundColor:'transparent',
+      borderWidth: hi?4:2, pointRadius: hi?3:2, tension:.25};
+  });
+  mkChart('ch-race',{type:'line',
+    data:{labels:rl.map(x=>x[0]), datasets:raceDs},
+    options:{maintainAspectRatio:false, interaction:{mode:'nearest',intersect:false},
+      plugins:{legend:{position:'bottom',labels:{boxWidth:12,padding:10}},
+        tooltip:{callbacks:{title:i=>rl[i[0].dataIndex].join(' · ')}}},
+      scales:{y:{title:{display:true,text:'Cumulative points'}}}}});
+  mkChart('ch-weekly',{type:'bar',
+    data:{labels:rl.map(x=>x[0]), datasets:chosen.map((t,i)=>({
+      label:shortName(t.name), data:t.weekly,
+      backgroundColor:t.name===highlightName?'#4caf7d':palette[i%palette.length]+'99'}))},
+    options:{maintainAspectRatio:false,
+      plugins:{legend:{position:'bottom',labels:{boxWidth:12,padding:10}},
+        tooltip:{callbacks:{title:i=>rl[i[0].dataIndex].join(' · ')}}},
+      scales:{y:{title:{display:true,text:'Weekly points (of 27)'}}}}});
+}
+renderRace(ME.name);
+raceTeamSelect.onchange = () => renderRace(raceTeamSelect.value);
+
+// ---- Team tab (pivotable) ----
+const teamSelect = document.getElementById('team-select');
+teamSelect.innerHTML = teamSelectOptionsHTML;
+teamSelect.value = ME.name;
+
+function renderTeam(name){
+  const t = DATA.teams.find(x=>x.name===name);
+  const p = PROJ_BY_TEAM[name];
+  const avg = t.total / t.weekly.length;
+  const high = Math.max(...t.weekly), low = Math.min(...t.weekly);
+  const inOut = p.projRank <= M.season.playoffSpots ? 'projected IN' : 'projected OUT';
+  document.getElementById('team-summary').innerHTML =
+    `<b>${name}</b> — currently #${t.rank} in Callaway with ${t.total.toFixed(1)} pts (avg ${avg.toFixed(1)}/wk). Shootout projection: <b>${inOut}</b>, ranked ${p.projRank} of 28 at ${p.proj.toFixed(1)} projected points (cut ≈ ${CUT.toFixed(1)}).`;
+
+  mkChart('ch-team-weekly',{type:'bar',
+    data:{labels:rl.map(x=>x[0]), datasets:[
+      {label:'Weekly points', data:t.weekly, backgroundColor:'#4caf7d'},
+      {type:'line', label:'Season avg', data:t.weekly.map(()=>avg), borderColor:'#e8c468', borderDash:[6,5], pointRadius:0}]},
+    options:{maintainAspectRatio:false,
+      plugins:{legend:{position:'bottom'}, tooltip:{callbacks:{title:i=>rl[i[0].dataIndex].join(' · ')}}},
+      scales:{y:{title:{display:true,text:'Points (of 27)'},suggestedMax:27}}}});
+
+  const detailH = document.getElementById('team-detail-h');
+  const tbl = document.getElementById('tbl-team-detail');
+  if (name === ME.name){
+    detailH.textContent = 'Weekly Results — with opponents';
+    tbl.innerHTML = `<thead><tr><th>Round</th><th>Opponent</th><th class="num">Us</th><th class="num">Them</th><th>Result</th><th>Note</th></tr></thead><tbody>`+
+      ME.matchups.map(m=>{
+        const res = m.us>m.them?'<span class="w">W</span>':m.us<m.them?'<span class="l">L</span>':'<span class="t">T</span>';
+        return `<tr><td style="white-space:nowrap">${m.round} · ${m.date}</td><td>${m.opp}</td><td class="num">${m.us.toFixed(1)}</td><td class="num">${m.them.toFixed(1)}</td><td>${res}</td><td>${m.rusty}</td></tr>`;
+      }).join('')+`</tbody>`;
+  } else {
+    detailH.textContent = 'Weekly Results';
+    tbl.innerHTML = `<thead><tr><th>Round</th><th class="num">Points</th><th>vs Own Average</th></tr></thead><tbody>`+
+      t.weekly.map((v,i)=>{
+        const d = v-avg;
+        const cls = d>1.5?'w':d<-1.5?'l':'t';
+        return `<tr><td>${rl[i].join(' · ')}</td><td class="num">${v.toFixed(1)}</td><td class="${cls}">${d>=0?'+':''}${d.toFixed(1)}</td></tr>`;
+      }).join('')+`</tbody>`;
+    tbl.parentElement.insertAdjacentHTML('beforebegin', '');
+  }
+}
+function setTeam(name){
+  teamSelect.value = name;
+  document.getElementById('banner-team-select').value = name;
+  renderTeam(name);
+  renderBannerTeam(name);
+}
+renderTeam(ME.name);
+teamSelect.onchange = () => setTeam(teamSelect.value);
+
+document.getElementById('tbl-upcoming').innerHTML =
+  `<thead><tr><th>Round</th><th>Date</th></tr></thead><tbody>`+
+  M.upcoming.map(u=>`<tr><td>${u.round}</td><td>${u.date}</td></tr>`).join('')+`</tbody>`;
+
+// ---- Player tab (pivotable) ----
+const playerSelect = document.getElementById('player-select');
+playerSelect.innerHTML = callawayPlayers.map(p=>`<option value="${p}">${p}</option>`).join('');
+playerSelect.value = 'Holiday, Rusty';
+
+function scClass(s,p){const d=s-p;if(d<=-2)return'sc-eagle';if(d===-1)return'sc-birdie';if(d===0)return'sc-par';if(d===1)return'sc-bogey';if(d===2)return'sc-double';return'sc-triple';}
+
+function renderPlayerDetail(pd){
+  const grosses = pd.rounds.map(r=>r.holes.reduce((a,b)=>a+b,0));
+  document.getElementById('player-kpis').innerHTML = [
+    [pd.hcpIndex.toFixed(1),'Handicap Index'],
+    [(grosses.reduce((a,b)=>a+b,0)/grosses.length).toFixed(1),'Avg Gross (9)'],
+    [pd.lowGross,'Low Gross'],
+    [pd.lowNet.toFixed(0),'Low Net'],
+  ].map(k=>`<div class="kpi"><div class="v">${k[0]}</div><div class="l">${k[1]}</div></div>`).join('');
+
+  const myRl = pd.rounds.map(r=>`${r.round} ${r.date}`);
+  mkChart('ch-gross',{type:'line',
+    data:{labels:pd.rounds.map(r=>r.round), datasets:[
+      {label:'Gross', data:grosses, borderColor:'#e8c468', backgroundColor:'rgba(232,196,104,.15)', fill:true, tension:.25, pointRadius:4},
+      {label:`Par (${pd.par9})`, data:grosses.map(()=>pd.par9), borderColor:'#4caf7d', borderDash:[6,5], pointRadius:0}]},
+    options:{maintainAspectRatio:false,
+      plugins:{legend:{position:'bottom'}, tooltip:{callbacks:{title:i=>myRl[i[0].dataIndex]+' ('+pd.rounds[i[0].dataIndex].nine+' 9)'}}},
+      scales:{y:{suggestedMin:pd.par9-1}}}});
+
+  const distLabels=['Eagle+','Birdie','Par','Bogey','Double','Triple+'];
+  const distColors=['#b8860b','#2e7d52','#4caf7d','#8a6d3b','#a4574a','#c2372a'];
+  mkChart('ch-dist',{type:'bar',
+    data:{labels:pd.rounds.map(r=>r.round), datasets:distLabels.map((l,i)=>({
+      label:l, data:pd.rounds.map(r=>r.dist[i]), backgroundColor:distColors[i], stack:'s'}))},
+    options:{maintainAspectRatio:false,
+      plugins:{legend:{position:'bottom',labels:{boxWidth:12}}, tooltip:{callbacks:{title:i=>myRl[i[0].dataIndex]}}},
+      scales:{x:{stacked:true},y:{stacked:true,title:{display:true,text:'Holes'}}}}});
+
+  let sc = '';
+  for(const nine of ['Front','Back']){
+    const c = pd.course[nine.toLowerCase()];
+    const holes = nine==='Front'?[1,2,3,4,5,6,7,8,9]:[10,11,12,13,14,15,16,17,18];
+    const rds = pd.rounds.filter(r=>r.nine===nine);
+    sc += `<table style="margin-bottom:18px"><thead><tr><th style="text-align:left">${nine} 9</th>${holes.map(h=>`<th>${h}</th>`).join('')}<th>Tot</th></tr></thead><tbody>`;
+    sc += `<tr><td style="text-align:left;color:var(--muted)">Par</td>${c.par.map(p=>`<td>${p}</td>`).join('')}<td><b>${c.par.reduce((a,b)=>a+b)}</b></td></tr>`;
+    sc += rds.map(r=>`<tr><td style="text-align:left;white-space:nowrap">${r.round} · ${r.date}</td>${r.holes.map((s,i)=>`<td><span class="${scClass(s,c.par[i])}" style="display:inline-block;min-width:26px;padding:2px 0">${s}</span></td>`).join('')}<td><b>${r.holes.reduce((a,b)=>a+b)}</b></td></tr>`).join('');
+    sc += `</tbody></table>`;
+  }
+  document.getElementById('scorecards').innerHTML = sc;
+
+  function nineChart(id, c, labels){
+    mkChart(id,{type:'bar',
+      data:{labels, datasets:[
+        {label:'Player avg', data:c.myAvg, backgroundColor:'#4caf7d'},
+        {label:'League avg', data:c.leagueAvg, backgroundColor:'#6aa9e0AA'},
+        {type:'line', label:'Par', data:c.par, borderColor:'#e8c468', borderDash:[5,4], pointRadius:0}]},
+      options:{maintainAspectRatio:false, plugins:{legend:{position:'bottom',labels:{boxWidth:12}}},
+        scales:{y:{suggestedMin:2}}}});
+  }
+  nineChart('ch-front', pd.course.front, [1,2,3,4,5,6,7,8,9]);
+  nineChart('ch-back', pd.course.back, [10,11,12,13,14,15,16,17,18]);
+}
+
+function renderPlayerBasic(name){
+  const row = DATA.playerStats.find(p=>p[0]===name);
+  const note = document.getElementById('player-basic-note');
+  if (!row){
+    document.getElementById('ch-player-basic').parentElement.innerHTML = '<p style="color:var(--muted);padding:20px">No season stats found for this player.</p>';
+    note.textContent = '';
+    return;
+  }
+  const labels=['Eagle+','Birdie','Par','Bogey','Double','Triple+'];
+  const colors=['#b8860b','#2e7d52','#4caf7d','#8a6d3b','#a4574a','#c2372a'];
+  mkChart('ch-player-basic',{type:'bar',
+    data:{labels, datasets:[{label:'Holes', data:row.slice(1), backgroundColor:colors}]},
+    options:{maintainAspectRatio:false, plugins:{legend:{display:false}}, indexAxis:'y'}});
+  const detailPlayers = Object.keys(DATA.playerDetail).map(k=>k.split(',')[0]).join(', ');
+  note.textContent = `Full round-by-round scorecards are loaded so far for: ${detailPlayers}. This chart shows ${name}'s season-long hole outcomes from the league's Player Stats page instead — ask to pull their full scorecards for the deep-dive view too.`;
+}
+
+function renderPlayer(name){
+  const hasDetail = !!DATA.playerDetail[name];
+  document.getElementById('player-detail-view').style.display = hasDetail ? '' : 'none';
+  document.getElementById('player-basic-view').style.display = hasDetail ? 'none' : '';
+  if (hasDetail) renderPlayerDetail(DATA.playerDetail[name]);
+  else renderPlayerBasic(name);
+}
+function setPlayer(name){
+  playerSelect.value = name;
+  document.getElementById('banner-player-select').value = name;
+  renderPlayer(name);
+  renderBannerPlayer(name);
+}
+renderPlayer('Holiday, Rusty');
+playerSelect.onchange = () => setPlayer(playerSelect.value);
+
+// ---- Banner selects (drive both the KPI strip and the Team/Player tabs) ----
+const bannerTeamSelect = document.getElementById('banner-team-select');
+const bannerPlayerSelect = document.getElementById('banner-player-select');
+bannerTeamSelect.innerHTML = teamSelectOptionsHTML;
+bannerPlayerSelect.innerHTML = callawayPlayers.map(p=>`<option value="${p}">${p}${DATA.playerDetail[p]?' ★':''}</option>`).join('');
+bannerTeamSelect.value = ME.name;
+bannerPlayerSelect.value = 'Holiday, Rusty';
+renderBannerTeam(ME.name);
+renderBannerPlayer('Holiday, Rusty');
+bannerTeamSelect.onchange = () => setTeam(bannerTeamSelect.value);
+bannerPlayerSelect.onchange = () => setPlayer(bannerPlayerSelect.value);
+
+// ---- Latest round (Callaway, Round 13) ----
+document.getElementById('latest-h').textContent = `Team Points — ${M.throughRound}`;
+document.getElementById('tbl-r13').innerHTML =
+  `<thead><tr><th>#</th><th>Team</th><th class="num">Points</th></tr></thead><tbody>`+
+  DATA.latestRound.map((r,i)=>`<tr${r[0]===ME.name?' class="me"':''}><td><span class="rankpill">${i+1}</span></td><td>${r[0]}</td><td class="num">${r[1].toFixed(1)}</td></tr>`).join('')+`</tbody>`;
+
+// ---- Player Stats sortable table (division filter, defaults to Callaway) ----
+const pCols = ['Player','Division','Eagle+','Birdies','Pars','Bogeys','Doubles','Triple+'];
+let pSort = {col:3, dir:-1};
+const pDivOf = p => playerDiv[p[0]] || 'sub';
+function renderPlayers(){
+  const q = document.getElementById('pfilter').value.toLowerCase();
+  const dv = document.getElementById('pdiv').value;
+  let rows = DATA.playerStats.filter(p =>
+    p[0].toLowerCase().includes(q) && (dv==='all' || pDivOf(p)===dv));
+  rows.sort((a,b)=>{
+    const c=pSort.col;
+    if(c===0) return pSort.dir*a[0].localeCompare(b[0]);
+    if(c===1) return pSort.dir*DIVNAME[pDivOf(a)].localeCompare(DIVNAME[pDivOf(b)]);
+    return pSort.dir*(a[c-1]-b[c-1]);
+  });
+  document.getElementById('tbl-players').innerHTML =
+    `<thead><tr>${pCols.map((c,i)=>`<th class="${i>1?'num ':''}${pSort.col===i?'sorted':''}" data-c="${i}">${c}${pSort.col===i?(pSort.dir<0?' ▾':' ▴'):''}</th>`).join('')}</tr></thead><tbody>`+
+    rows.map(p=>`<tr${p[0]==='Holiday, Rusty'?' class="me"':''}><td>${p[0]}</td><td style="color:var(--muted)">${DIVNAME[pDivOf(p)]}</td>${p.slice(1).map(v=>`<td class="num">${v}</td>`).join('')}</tr>`).join('')+`</tbody>`;
+  document.querySelectorAll('#tbl-players th').forEach(th=>th.onclick=()=>{
+    const c=+th.dataset.c;
+    if(pSort.col===c) pSort.dir*=-1; else {pSort.col=c; pSort.dir=c<=1?1:-1;}
+    renderPlayers();
+  });
+}
+document.getElementById('pfilter').oninput = renderPlayers;
+document.getElementById('pdiv').onchange = renderPlayers;
+renderPlayers();
+</script>
+</body>
+</html>
