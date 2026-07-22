@@ -14,12 +14,14 @@ Usage:
     python3 scripts/scrape_to_league_data.py --add-player "Doe, Jane"
 
 What this CAN derive from the site every run:
-    - Callaway team standings, rank, and this round's points (by diffing
-      each team's new total against its previous stored total)
-    - Titleist team standings (current snapshot — see note below)
+    - Callaway AND Titleist team standings, rank, and this round's points
+      (by diffing each team's new total against its previous stored total)
+      — both divisions get full weekly-history tracking and drop-2 shootout
+      projections, at full parity.
     - the full player roster's season hole-outcome totals (playerStats)
-    - full round-by-round scorecards for whichever players are already
-      being tracked in playerDetail (or newly added via --add-player)
+    - full round-by-round scorecards for every player on a Callaway or
+      Titleist team roster (both divisions, full parity), plus anyone
+      added via --add-player
 
 What it CANNOT derive, because no page ggscrape reads exposes it, and
 carries forward unchanged from the existing file instead:
@@ -28,12 +30,16 @@ carries forward unchanged from the existing file instead:
     - meta.season config (scoringWeeks, dropCount, playoffSpots, ...) and
       meta.upcoming's schedule beyond what was already on file
 
-Note on Titleist: only the current snapshot (rank + total points) is
-refreshed each run, matching Callaway's simple standings table. Unlike
-Callaway, no week-by-week history is being accumulated for Titleist (that
-would need its own weekly-diff tracking + playoff-projection UI, which
-hasn't been built), so the Playoffs tab's Titleist view stays "top of
-division today" rather than a drop-2 projection.
+Note on Titleist weekly history: it's only ever known from the round this
+tracking started (a team's cumulative total-to-date doesn't tell us its
+per-round points), so a brand-new team's weekly array starts empty and
+accumulates one real week at a time from here. The shootout projection
+just looks thin until a few real weeks build up.
+
+Note on runtime/cost: with both divisions' rosters tracked (~110+ players),
+a full run makes a lot of requests to a small club's server. It's polite
+(rate-limited with backoff) but expect several minutes, more if the site
+starts 429ing under the volume.
 
 Run this after each week's round, skim the printed warnings, fill in the
 new myTeam.matchups entry by hand, then run build_dashboard.py.
@@ -112,6 +118,33 @@ def build_player_detail(gg) -> dict:
     }
 
 
+def diff_division_standings(live_teams, prev_teams_by_name, new_round_posted, label, warnings):
+    """Build this division's {name, rank, total, weekly} list, diffing each
+    team's new total against its previously saved total to get this round's
+    points. A team with no prior weekly history (never tracked before, e.g.
+    Titleist on its first run) starts with an empty weekly array rather than
+    a fabricated week — its cumulative total doesn't tell us this round's
+    points, so there's nothing honest to backfill.
+    """
+    teams = []
+    round_diffs = []
+    for t in live_teams:
+        prev_t = prev_teams_by_name.get(t.name)
+        prev_weekly = prev_t["weekly"] if prev_t else []
+        if not new_round_posted:
+            weekly = prev_weekly
+        elif prev_t is None:
+            warnings.append(f"{label} team {t.name!r} has no prior weekly history — starting to track from next round.")
+            weekly = []
+        else:
+            diff = round(t.total_points - prev_t["total"], 1)
+            weekly = prev_weekly + [diff]
+            round_diffs.append([t.name, diff])
+        teams.append({"name": t.name, "rank": t.rank, "total": t.total_points, "weekly": weekly})
+    round_diffs.sort(key=lambda r: -r[1])
+    return teams, round_diffs
+
+
 def find_member(roster, name: str):
     """Exact match first (roster names are canonical 'Last, First'), then a
     unique case-insensitive substring match like ggscrape's CLI --name does."""
@@ -148,58 +181,41 @@ def main():
     client = Client(args.base_url, delay=args.delay, dump_dir=args.dump_html)
     site = discover(client)
 
-    # ---- Callaway standings ----
+    # ---- fetch both divisions' live standings ----
     standings_url = client.widget_url(site.league_id, "customized_team_standings", site.page_id("standing"))
-    live_teams = parse_standings(client.get(standings_url, dump_name="standings"))
+    live_cal = parse_standings(client.get(standings_url, dump_name="standings"))
+    live_tit = fetch_division_standings(client, site.league_id, site.page_id("standing"), "Titleist")
 
-    prev_teams_by_name = {t["name"]: t for t in prev["teams"]}
+    prev_cal_by_name = {t["name"]: t for t in prev["teams"]}
+    prev_tit_by_name = {t["name"]: t for t in prev.get("titleistTeams", [])}
     matched_diffs = [
-        round(t.total_points - prev_teams_by_name[t.name]["total"], 1)
-        for t in live_teams if t.name in prev_teams_by_name
+        round(t.total_points - prev_cal_by_name[t.name]["total"], 1)
+        for t in live_cal if t.name in prev_cal_by_name
+    ] + [
+        round(t.total_points - prev_tit_by_name[t.name]["total"], 1)
+        for t in live_tit if t.name in prev_tit_by_name
     ]
     new_round_posted = args.force_round or any(d != 0 for d in matched_diffs)
-
     if not new_round_posted:
         warnings.append(
             "No team's point total changed since the last save — this week's round doesn't look "
             "posted yet. Standings/weekly history/meta left unchanged (pass --force-round to override). "
             "playerStats and tracked players' scorecards were still refreshed below."
         )
-        # Still refresh rank/total in case of a correction, but don't touch weekly history.
-        data["teams"] = [
-            {**prev_teams_by_name.get(t.name, {"weekly": [t.total_points]}), "rank": t.rank, "total": t.total_points}
-            for t in live_teams
-        ]
-        data["callawayWeekly"] = {t["name"]: t["weekly"] for t in data["teams"]}
-        data["standings"]["callaway"] = [[t.name, t.total_points] for t in live_teams]
-    else:
-        new_teams = []
-        round_diffs = []
-        for t in live_teams:
-            prev_t = prev_teams_by_name.get(t.name)
-            if prev_t is None:
-                warnings.append(f"New team not in previous file: {t.name!r} — starting its weekly history from this round only.")
-                weekly = [t.total_points]
-            else:
-                diff = round(t.total_points - prev_t["total"], 1)
-                weekly = prev_t["weekly"] + [diff]
-                round_diffs.append([t.name, diff])
-            new_teams.append({"name": t.name, "rank": t.rank, "total": t.total_points, "weekly": weekly})
-        round_diffs.sort(key=lambda r: -r[1])
 
-        data["teams"] = new_teams
-        data["callawayWeekly"] = {t["name"]: t["weekly"] for t in new_teams}
-        data["standings"]["callaway"] = [[t["name"], t["total"]] for t in new_teams]
-        data["latestRound"] = round_diffs
+    cal_teams, cal_diffs = diff_division_standings(live_cal, prev_cal_by_name, new_round_posted, "Callaway", warnings)
+    tit_teams, tit_diffs = diff_division_standings(live_tit, prev_tit_by_name, new_round_posted, "Titleist", warnings)
+
+    data["teams"] = cal_teams
+    data["callawayWeekly"] = {t["name"]: t["weekly"] for t in cal_teams}
+    data["standings"]["callaway"] = [[t["name"], t["total"]] for t in cal_teams]
+    data["titleistTeams"] = tit_teams
+    data["titleistWeekly"] = {t["name"]: t["weekly"] for t in tit_teams}
+    data["standings"]["titleist"] = [[t["name"], t["total"]] for t in tit_teams]
+    if new_round_posted:
+        data["latestRound"] = cal_diffs
+        data["latestRoundTitleist"] = tit_diffs
     data.pop("round13", None)  # old per-round-number key name; dashboard now reads "latestRound"
-
-    # ---- Titleist standings (current snapshot only — no weekly history tracked) ----
-    try:
-        titleist_teams = fetch_division_standings(client, site.league_id, site.page_id("standing"), "Titleist")
-        data.setdefault("standings", {})["titleist"] = [[t.name, t.total_points] for t in titleist_teams]
-    except Exception as e:
-        warnings.append(f"Failed to fetch Titleist standings ({e}) — keeping previous snapshot.")
-        data.setdefault("standings", {})["titleist"] = prev.get("standings", {}).get("titleist", [])
 
     # ---- myTeam ----
     my_name = prev["myTeam"]["name"]
@@ -221,8 +237,9 @@ def main():
         key=lambda r: r[0],
     )
 
-    # ---- playerDetail for tracked (+ newly added) players ----
-    tracked = sorted(set(prev.get("playerDetail", {}).keys()) | set(args.add_player))
+    # ---- playerDetail: every Callaway + Titleist team member, full parity ----
+    all_team_members = {m for t in live_cal for m in t.members} | {m for t in live_tit for m in t.members}
+    tracked = sorted(all_team_members | set(prev.get("playerDetail", {}).keys()) | set(args.add_player))
     new_player_detail = {}
     for name in tracked:
         member = find_member(roster, name)
@@ -262,7 +279,12 @@ def main():
             {"round": None, "date": None, "note": "No further scheduled rounds on file — add them to meta.upcoming"}
         )
     meta["lastUpdated"] = dt.date.today().isoformat()
-    meta["titleistAsOf"] = f"As of {meta['lastUpdated']} — current standings only, no week-by-week history tracked"
+    tit_weeks = len(tit_teams[0]["weekly"]) if tit_teams and tit_teams[0]["weekly"] else 0
+    meta["titleistAsOf"] = (
+        f"As of {meta['lastUpdated']} — {tit_weeks} week(s) of history tracked"
+        if tit_weeks else
+        f"As of {meta['lastUpdated']} — weekly history tracking just started, not enough weeks yet for a shootout projection"
+    )
 
     out_text = json.dumps(data, indent=2) + "\n"
     if args.dry_run:

@@ -97,7 +97,7 @@ a{color:var(--blue)}
 <section id="overview" class="visible">
   <h2>Callaway Division</h2>
   <div class="card"><table id="tbl-cal"></table></div>
-  <h2>Titleist Division <span style="color:var(--muted);font-weight:normal;font-size:.75rem">(as of <span id="tit-asof"></span> — not actively refreshed)</span></h2>
+  <h2>Titleist Division <span style="color:var(--muted);font-weight:normal;font-size:.75rem">(<span id="tit-asof"></span>)</span></h2>
   <div class="card"><table id="tbl-tit"></table></div>
 </section>
 
@@ -110,8 +110,8 @@ a{color:var(--blue)}
   <div class="card"><table id="tbl-playoffs"></table></div>
   </div>
   <div id="playoff-tit" style="display:none">
-  <h2>Shootout Race — Titleist Division (current standings)</h2>
-  <p class="note">Titleist standings are refreshed live each week, but week-by-week history isn't tracked yet (only the current snapshot), so this shows the current top of the division rather than a drop-2 projection. The gold line marks the top-7 cut as it stands today.</p>
+  <h2 id="playoff-tit-h">Shootout Projection — Titleist Division</h2>
+  <p class="note" id="playoff-tit-note"></p>
   <div class="card"><table id="tbl-playoffs-tit"></table></div>
   </div>
   <h2>How the cut works</h2>
@@ -123,8 +123,8 @@ a{color:var(--blue)}
 
 <section id="race">
   <div class="picker"><label>Highlight team:</label><select id="race-team-select"></select></div>
-  <h2>Season Points Race — Callaway</h2>
-  <p class="note">Top 8 by current points, plus your selected team if it's outside the top 8.</p>
+  <h2 id="race-h">Season Points Race</h2>
+  <p class="note" id="race-note">Top 8 by current points, plus your selected team if it's outside the top 8.</p>
   <div class="card"><div class="chartbox tall"><canvas id="ch-race"></canvas></div></div>
   <h2>Weekly Points</h2>
   <div class="card"><div class="chartbox"><canvas id="ch-weekly"></canvas></div></div>
@@ -170,8 +170,9 @@ a{color:var(--blue)}
 </section>
 
 <section id="latest">
+  <div class="pills" id="latest-pills"><button data-d="cal" class="on">Callaway</button><button data-d="tit">Titleist</button></div>
   <h2 id="latest-h"></h2>
-  <p class="note">Callaway team points earned in the most recent round.</p>
+  <p class="note" id="latest-note">Callaway team points earned in the most recent round.</p>
   <div class="card"><table id="tbl-r13"></table></div>
 </section>
 
@@ -229,9 +230,9 @@ document.getElementById('tit-asof').textContent = M.titleistAsOf || '';
 
 // ---- KPIs (reactive to the Team/Player pivot selected below) ----
 function renderBannerTeam(name){
-  const t = DATA.teams.find(x=>x.name===name);
+  const t = teamByName[name];
   const kp = [
-    [`#${t.rank}`, `${shortName(name)} · Rank`, 'gold'],
+    [`#${t.rank}`, `${shortName(name)} · Rank (${DIVNAME[t.division]})`, 'gold'],
     [t.total.toFixed(1), `${shortName(name)} · Points`],
   ];
   document.getElementById('kpis-team').innerHTML = kp.map(k=>`<div class="kpi"><div class="v ${k[2]||''}">${k[0]}</div><div class="l">${k[1]}</div></div>`).join('');
@@ -280,15 +281,26 @@ const CAL = new Set(DATA.standings.callaway.map(r=>r[0]));
 const TIT = new Set(DATA.standings.titleist.map(r=>r[0]));
 const teamDiv = t => CAL.has(t) ? 'cal' : TIT.has(t) ? 'tit' : 'sub';
 const playerDiv = {};
-const callawayPlayers = [];
+const allPlayers = [];
 for (const [rows, d] of [[DATA.standings.callaway,'cal'], [DATA.standings.titleist,'tit']])
   rows.forEach(r => r[0].split(' + ').forEach(p => {
     p = p.trim();
     playerDiv[p] = d;
-    if (d==='cal') callawayPlayers.push(p);
+    allPlayers.push(p);
   }));
-callawayPlayers.sort();
+allPlayers.sort();
 const DIVNAME = {cal:'Callaway', tit:'Titleist', sub:'Sub / fill-in'};
+
+// ---- All teams, both divisions, tagged with division ----
+const ALL_TEAMS = [
+  ...DATA.teams.map(t=>({...t, division:'cal'})),
+  ...(DATA.titleistTeams||[]).map(t=>({...t, division:'tit'})),
+];
+const teamByName = Object.fromEntries(ALL_TEAMS.map(t=>[t.name, t]));
+// Titleist weekly tracking started mid-season, so its arrays only cover the
+// most recent N rounds — align them against the trailing N round labels
+// rather than assuming they start at round 2 like Callaway's do.
+const roundLabelsFor = wk => rl.slice(rl.length - wk.length);
 
 function wirePills(id, fn){
   const box = document.getElementById(id);
@@ -320,7 +332,9 @@ try{
 const palette = ['#e8c468','#6aa9e0','#b58ce0','#4caf7d','#e07a6b','#5fc9c4','#d087b5','#9aa85f'];
 const shortName = t => t.replace(/, \w[\w ]* \+ /,'/').replace(/, \w[\w ]*$/,'');
 
-// ---- Playoff projection engine (used by Playoffs tab AND Team tab) ----
+// ---- Playoff projection engine — Callaway (used by Playoffs tab AND Team tab) ----
+// Callaway's weekly array spans the whole season from round 2, so the
+// league's real "best 13 of 15" drop-2 rule can be computed directly.
 function computeProjections(){
   const S = M.season, remain = S.scoringWeeks - S.playedWeeks;
   const rows = Object.entries(DATA.callawayWeekly).map(([team, wk])=>{
@@ -339,6 +353,28 @@ function computeProjections(){
 const PROJ = computeProjections();
 const PROJ_BY_TEAM = Object.fromEntries(PROJ.map((r,i)=>[r.team, {...r, projRank:i+1}]));
 const CUT = PROJ[M.season.playoffSpots-1].proj;
+
+// ---- Playoff projection engine — Titleist (approximate) ----
+// Titleist weekly tracking only started once this dashboard began reading
+// it live, so its history is a handful of trailing weeks, not the full 15
+// the drop-2 rule needs — there's no way to know which of the *earlier*
+// (untracked) weeks would've been a team's worst. So this uses each team's
+// real current total (always accurate, straight from standings) plus its
+// tracked recent average projected across the remaining weeks, with NO
+// drop-2 adjustment. It gets more meaningful as more real weeks accumulate.
+const S_ = M.season, remainWeeks = S_.scoringWeeks - S_.playedWeeks;
+const TIT_WEEKS_TRACKED = Object.values(DATA.titleistWeekly||{}).reduce((m,w)=>Math.max(m,w.length), 0);
+const titleistTeamByName = Object.fromEntries((DATA.titleistTeams||[]).map(t=>[t.name,t]));
+const PROJ_TIT = Object.entries(DATA.titleistWeekly||{}).map(([team, wk])=>{
+  const t = titleistTeamByName[team];
+  const avg = wk.length ? wk.reduce((a,b)=>a+b,0)/wk.length : null;
+  const proj = avg!==null ? t.total + avg*remainWeeks : t.total;
+  return {team, total:t.total, avg, weeksTracked:wk.length, proj};
+}).sort((a,b)=>b.proj-a.proj);
+const PROJ_TIT_BY_TEAM = Object.fromEntries(PROJ_TIT.map((r,i)=>[r.team, {...r, projRank:i+1}]));
+const CUT_TIT = PROJ_TIT.length ? PROJ_TIT[M.season.playoffSpots-1].proj : 0;
+const projFor = div => div==='tit' ? PROJ_TIT_BY_TEAM : PROJ_BY_TEAM;
+const cutFor = div => div==='tit' ? CUT_TIT : CUT;
 
 // ---- Playoffs tab render ----
 (function(){
@@ -362,27 +398,62 @@ wirePills('playoff-pills', d => {
   document.getElementById('playoff-cal').style.display = d==='cal' ? '' : 'none';
   document.getElementById('playoff-tit').style.display = d==='tit' ? '' : 'none';
 });
-document.getElementById('tbl-playoffs-tit').innerHTML =
-  `<thead><tr><th>#</th><th>Team</th><th class="num">Current Points</th><th class="num">Behind 7th</th></tr></thead><tbody>`+
-  DATA.standings.titleist.map((r,i)=>{
-    const seventh = DATA.standings.titleist[6][1];
-    const gap = r[1]-seventh;
-    const cutRow = i===6 ? ' style="border-bottom:2px solid var(--gold)"' : '';
-    return `<tr${cutRow}><td><span class="rankpill">${i+1}</span></td><td>${r[0]}${i<7?' <span style="color:var(--gold)">★</span>':''}</td><td class="num">${r[1].toFixed(1)}</td><td class="num ${gap>=0?'w':'l'}">${gap>=0?'+':''}${gap.toFixed(1)}</td></tr>`;
-  }).join('')+`</tbody>`;
+(function(){
+  const S = M.season;
+  if (TIT_WEEKS_TRACKED === 0){
+    document.getElementById('playoff-tit-h').textContent = 'Shootout Race — Titleist Division (current standings)';
+    document.getElementById('playoff-tit-note').textContent =
+      `This shows the current top of the division rather than a projection. The gold line marks the top-7 cut as it stands today.`;
+    document.getElementById('tbl-playoffs-tit').innerHTML =
+      `<thead><tr><th>#</th><th>Team</th><th class="num">Current Points</th><th class="num">Behind 7th</th></tr></thead><tbody>`+
+      DATA.standings.titleist.map((r,i)=>{
+        const seventh = DATA.standings.titleist[S.playoffSpots-1][1];
+        const gap = r[1]-seventh;
+        const cutRow = i===S.playoffSpots-1 ? ' style="border-bottom:2px solid var(--gold)"' : '';
+        return `<tr${cutRow}><td><span class="rankpill">${i+1}</span></td><td>${r[0]}${i<S.playoffSpots?' <span style="color:var(--gold)">★</span>':''}</td><td class="num">${r[1].toFixed(1)}</td><td class="num ${gap>=0?'w':'l'}">${gap>=0?'+':''}${gap.toFixed(1)}</td></tr>`;
+      }).join('')+`</tbody>`;
+  } else {
+    document.getElementById('playoff-tit-h').textContent = 'Shootout Projection — Titleist Division (approximate)';
+    document.getElementById('playoff-tit-note').textContent =
+      `${TIT_WEEKS_TRACKED} of ${S.scoringWeeks} weeks tracked so far (started mid-season) — projection is current total + tracked recent average for the ${remainWeeks} remaining weeks, WITHOUT the drop-2 adjustment (not enough real weekly history yet to know which weeks would be dropped). Treat this as a rough guide, not the real cut line.`;
+    document.getElementById('tbl-playoffs-tit').innerHTML =
+      `<thead><tr><th>Proj #</th><th>Team</th><th class="num">Current</th><th class="num">Avg/wk (tracked)</th><th class="num">Weeks tracked</th><th class="num">Projected final (approx)</th><th class="num">vs cut</th></tr></thead><tbody>`+
+      PROJ_TIT.map((r,i)=>{
+        const d = r.proj - CUT_TIT;
+        const cutRow = i===S.playoffSpots-1 ? ' style="border-bottom:2px solid var(--gold)"' : '';
+        return `<tr${cutRow}><td><span class="rankpill">${i+1}</span></td><td>${r.team}${i<S.playoffSpots?' <span title="projected in" style="color:var(--gold)">★</span>':''}</td><td class="num">${r.total.toFixed(1)}</td><td class="num">${r.avg!==null?r.avg.toFixed(1):'—'}</td><td class="num" style="color:var(--muted)">${r.weeksTracked}</td><td class="num"><b>${r.proj.toFixed(1)}</b></td><td class="num ${d>=0?'w':'l'}">${d>=0?'+':''}${d.toFixed(1)}</td></tr>`;
+      }).join('')+`</tbody>`;
+  }
+})();
 
-// ---- Points Race tab (pivotable highlight) ----
-const teamSelectOptionsHTML = DATA.teams.map(t=>`<option value="${t.name}">#${t.rank} — ${t.name}</option>`).join('');
+// ---- Points Race tab (pivotable highlight, either division) ----
+const teamSelectOptionsHTML =
+  `<optgroup label="Callaway">${DATA.teams.map(t=>`<option value="${t.name}">#${t.rank} — ${t.name}</option>`).join('')}</optgroup>` +
+  `<optgroup label="Titleist">${(DATA.titleistTeams||[]).map(t=>`<option value="${t.name}">#${t.rank} — ${t.name}</option>`).join('')}</optgroup>`;
 const raceTeamSelect = document.getElementById('race-team-select');
 raceTeamSelect.innerHTML = teamSelectOptionsHTML;
 raceTeamSelect.value = ME.name;
 
 function renderRace(highlightName){
-  const byTotal = [...DATA.teams].sort((a,b)=>b.total-a.total);
+  const div = teamByName[highlightName].division;
+  document.getElementById('race-h').textContent = `Season Points Race — ${DIVNAME[div]}`;
+  const pool = ALL_TEAMS.filter(t=>t.division===div);
+  if (!pool.length || !pool[0].weekly.length){
+    document.getElementById('race-note').textContent = `${DIVNAME[div]} weekly tracking just started — not enough tracked weeks yet to chart.`;
+    // Leave the canvases as-is (just clear any prior chart) rather than
+    // replacing them, so switching back to a division with data still works.
+    ['ch-race','ch-weekly'].forEach(id=>{
+      if (chartInstances[id]) { chartInstances[id].destroy(); delete chartInstances[id]; }
+    });
+    return;
+  }
+  document.getElementById('race-note').textContent = 'Top 8 by current points, plus your selected team if it\'s outside the top 8.';
+  const byTotal = [...pool].sort((a,b)=>b.total-a.total);
   let chosen = byTotal.slice(0,8);
   if (!chosen.some(t=>t.name===highlightName)){
-    chosen = chosen.slice(0,7).concat(DATA.teams.find(t=>t.name===highlightName));
+    chosen = chosen.slice(0,7).concat(pool.find(t=>t.name===highlightName));
   }
+  const divRl = roundLabelsFor(chosen[0].weekly);
   const raceDs = chosen.map((t,i)=>{
     let c=0; const cum=t.weekly.map(w=>+(c+=w).toFixed(1));
     const hi = t.name===highlightName;
@@ -391,18 +462,18 @@ function renderRace(highlightName){
       borderWidth: hi?4:2, pointRadius: hi?3:2, tension:.25};
   });
   mkChart('ch-race',{type:'line',
-    data:{labels:rl.map(x=>x[0]), datasets:raceDs},
+    data:{labels:divRl.map(x=>x[0]), datasets:raceDs},
     options:{maintainAspectRatio:false, interaction:{mode:'nearest',intersect:false},
       plugins:{legend:{position:'bottom',labels:{boxWidth:12,padding:10}},
-        tooltip:{callbacks:{title:i=>rl[i[0].dataIndex].join(' · ')}}},
+        tooltip:{callbacks:{title:i=>divRl[i[0].dataIndex].join(' · ')}}},
       scales:{y:{title:{display:true,text:'Cumulative points'}}}}});
   mkChart('ch-weekly',{type:'bar',
-    data:{labels:rl.map(x=>x[0]), datasets:chosen.map((t,i)=>({
+    data:{labels:divRl.map(x=>x[0]), datasets:chosen.map((t,i)=>({
       label:shortName(t.name), data:t.weekly,
       backgroundColor:t.name===highlightName?'#4caf7d':palette[i%palette.length]+'99'}))},
     options:{maintainAspectRatio:false,
       plugins:{legend:{position:'bottom',labels:{boxWidth:12,padding:10}},
-        tooltip:{callbacks:{title:i=>rl[i[0].dataIndex].join(' · ')}}},
+        tooltip:{callbacks:{title:i=>divRl[i[0].dataIndex].join(' · ')}}},
       scales:{y:{title:{display:true,text:'Weekly points (of 27)'}}}}});
 }
 renderRace(ME.name);
@@ -414,21 +485,31 @@ teamSelect.innerHTML = teamSelectOptionsHTML;
 teamSelect.value = ME.name;
 
 function renderTeam(name){
-  const t = DATA.teams.find(x=>x.name===name);
-  const p = PROJ_BY_TEAM[name];
-  const avg = t.total / t.weekly.length;
-  const high = Math.max(...t.weekly), low = Math.min(...t.weekly);
-  const inOut = p.projRank <= M.season.playoffSpots ? 'projected IN' : 'projected OUT';
-  document.getElementById('team-summary').innerHTML =
-    `<b>${name}</b> — currently #${t.rank} in Callaway with ${t.total.toFixed(1)} pts (avg ${avg.toFixed(1)}/wk). Shootout projection: <b>${inOut}</b>, ranked ${p.projRank} of 28 at ${p.proj.toFixed(1)} projected points (cut ≈ ${CUT.toFixed(1)}).`;
+  const t = teamByName[name];
+  const div = t.division, divLabel = DIVNAME[div];
+  const wk = t.weekly;
+  const trackedAvg = wk.length ? wk.reduce((a,b)=>a+b,0)/wk.length : null;
 
-  mkChart('ch-team-weekly',{type:'bar',
-    data:{labels:rl.map(x=>x[0]), datasets:[
-      {label:'Weekly points', data:t.weekly, backgroundColor:'#4caf7d'},
-      {type:'line', label:'Season avg', data:t.weekly.map(()=>avg), borderColor:'#e8c468', borderDash:[6,5], pointRadius:0}]},
-    options:{maintainAspectRatio:false,
-      plugins:{legend:{position:'bottom'}, tooltip:{callbacks:{title:i=>rl[i[0].dataIndex].join(' · ')}}},
-      scales:{y:{title:{display:true,text:'Points (of 27)'},suggestedMax:27}}}});
+  if (!wk.length){
+    document.getElementById('team-summary').innerHTML =
+      `<b>${name}</b> — currently #${t.rank} in ${divLabel} with ${t.total.toFixed(1)} pts. Weekly tracking just started for ${divLabel} — not enough data yet for a trend chart or shootout projection.`;
+    if (chartInstances['ch-team-weekly']) { chartInstances['ch-team-weekly'].destroy(); delete chartInstances['ch-team-weekly']; }
+  } else {
+    const p = projFor(div)[name], cut = cutFor(div);
+    const inOut = p.projRank <= M.season.playoffSpots ? 'projected IN' : 'projected OUT';
+    const avgLabel = div==='cal' ? 'Season avg' : `Avg over ${wk.length} tracked wk${wk.length===1?'':'s'}`;
+    document.getElementById('team-summary').innerHTML =
+      `<b>${name}</b> — currently #${t.rank} in ${divLabel} with ${t.total.toFixed(1)} pts (avg ${trackedAvg.toFixed(1)}/wk). Shootout projection: <b>${inOut}</b>, ranked ${p.projRank} of 28 at ${p.proj.toFixed(1)} projected points (cut ≈ ${cut.toFixed(1)}).`;
+
+    const divRl = roundLabelsFor(wk);
+    mkChart('ch-team-weekly',{type:'bar',
+      data:{labels:divRl.map(x=>x[0]), datasets:[
+        {label:'Weekly points', data:wk, backgroundColor:'#4caf7d'},
+        {type:'line', label:avgLabel, data:wk.map(()=>trackedAvg), borderColor:'#e8c468', borderDash:[6,5], pointRadius:0}]},
+      options:{maintainAspectRatio:false,
+        plugins:{legend:{position:'bottom'}, tooltip:{callbacks:{title:i=>divRl[i[0].dataIndex].join(' · ')}}},
+        scales:{y:{title:{display:true,text:'Points (of 27)'},suggestedMax:27}}}});
+  }
 
   const detailH = document.getElementById('team-detail-h');
   const tbl = document.getElementById('tbl-team-detail');
@@ -439,15 +520,18 @@ function renderTeam(name){
         const res = m.us>m.them?'<span class="w">W</span>':m.us<m.them?'<span class="l">L</span>':'<span class="t">T</span>';
         return `<tr><td style="white-space:nowrap">${m.round} · ${m.date}</td><td>${m.opp}</td><td class="num">${m.us.toFixed(1)}</td><td class="num">${m.them.toFixed(1)}</td><td>${res}</td><td>${m.rusty}</td></tr>`;
       }).join('')+`</tbody>`;
-  } else {
+  } else if (!wk.length){
     detailH.textContent = 'Weekly Results';
-    tbl.innerHTML = `<thead><tr><th>Round</th><th class="num">Points</th><th>vs Own Average</th></tr></thead><tbody>`+
-      t.weekly.map((v,i)=>{
-        const d = v-avg;
+    tbl.innerHTML = `<thead><tr><th>No tracked weeks yet for ${divLabel}</th></tr></thead>`;
+  } else {
+    const divRl = roundLabelsFor(wk);
+    detailH.textContent = 'Weekly Results';
+    tbl.innerHTML = `<thead><tr><th>Round</th><th class="num">Points</th><th>vs Tracked Average</th></tr></thead><tbody>`+
+      wk.map((v,i)=>{
+        const d = v-trackedAvg;
         const cls = d>1.5?'w':d<-1.5?'l':'t';
-        return `<tr><td>${rl[i].join(' · ')}</td><td class="num">${v.toFixed(1)}</td><td class="${cls}">${d>=0?'+':''}${d.toFixed(1)}</td></tr>`;
+        return `<tr><td>${divRl[i].join(' · ')}</td><td class="num">${v.toFixed(1)}</td><td class="${cls}">${d>=0?'+':''}${d.toFixed(1)}</td></tr>`;
       }).join('')+`</tbody>`;
-    tbl.parentElement.insertAdjacentHTML('beforebegin', '');
   }
 }
 function setTeam(name){
@@ -463,9 +547,16 @@ document.getElementById('tbl-upcoming').innerHTML =
   `<thead><tr><th>Round</th><th>Date</th></tr></thead><tbody>`+
   M.upcoming.map(u=>`<tr><td>${u.round}</td><td>${u.date}</td></tr>`).join('')+`</tbody>`;
 
-// ---- Player tab (pivotable) ----
+// ---- Player tab (pivotable, both divisions) ----
+function playerOptionsHTML(withStar){
+  const byDiv = {cal:[], tit:[], sub:[]};
+  allPlayers.forEach(p => byDiv[playerDiv[p]||'sub'].push(p));
+  return ['cal','tit','sub'].filter(d=>byDiv[d].length).map(d=>
+    `<optgroup label="${DIVNAME[d]}">${byDiv[d].map(p=>`<option value="${p}">${p}${withStar&&DATA.playerDetail[p]?' ★':''}</option>`).join('')}</optgroup>`
+  ).join('');
+}
 const playerSelect = document.getElementById('player-select');
-playerSelect.innerHTML = callawayPlayers.map(p=>`<option value="${p}">${p}</option>`).join('');
+playerSelect.innerHTML = playerOptionsHTML(false);
 playerSelect.value = 'Holiday, Rusty';
 
 function scClass(s,p){const d=s-p;if(d<=-2)return'sc-eagle';if(d===-1)return'sc-birdie';if(d===0)return'sc-par';if(d===1)return'sc-bogey';if(d===2)return'sc-double';return'sc-triple';}
@@ -535,8 +626,9 @@ function renderPlayerBasic(name){
   mkChart('ch-player-basic',{type:'bar',
     data:{labels, datasets:[{label:'Holes', data:row.slice(1), backgroundColor:colors}]},
     options:{maintainAspectRatio:false, plugins:{legend:{display:false}}, indexAxis:'y'}});
-  const detailPlayers = Object.keys(DATA.playerDetail).map(k=>k.split(',')[0]).join(', ');
-  note.textContent = `Full round-by-round scorecards are loaded so far for: ${detailPlayers}. This chart shows ${name}'s season-long hole outcomes from the league's Player Stats page instead — ask to pull their full scorecards for the deep-dive view too.`;
+  const div = playerDiv[name];
+  const reason = div==='cal'||div==='tit' ? `— unusual, since ${name.split(',')[0]} is on a ${DIVNAME[div]} team roster; ask to pull their full scorecards too` : `since ${name.split(',')[0]} is a sub/fill-in, not on a full team roster`;
+  note.textContent = `No full round-by-round scorecard for ${name} yet ${reason}. This chart shows their season-long hole outcomes from the league's Player Stats page instead.`;
 }
 
 function renderPlayer(name){
@@ -559,7 +651,7 @@ playerSelect.onchange = () => setPlayer(playerSelect.value);
 const bannerTeamSelect = document.getElementById('banner-team-select');
 const bannerPlayerSelect = document.getElementById('banner-player-select');
 bannerTeamSelect.innerHTML = teamSelectOptionsHTML;
-bannerPlayerSelect.innerHTML = callawayPlayers.map(p=>`<option value="${p}">${p}${DATA.playerDetail[p]?' ★':''}</option>`).join('');
+bannerPlayerSelect.innerHTML = playerOptionsHTML(true);
 bannerTeamSelect.value = ME.name;
 bannerPlayerSelect.value = 'Holiday, Rusty';
 renderBannerTeam(ME.name);
@@ -567,11 +659,23 @@ renderBannerPlayer('Holiday, Rusty');
 bannerTeamSelect.onchange = () => setTeam(bannerTeamSelect.value);
 bannerPlayerSelect.onchange = () => setPlayer(bannerPlayerSelect.value);
 
-// ---- Latest round (Callaway, Round 13) ----
+// ---- Latest round (both divisions) ----
 document.getElementById('latest-h').textContent = `Team Points — ${M.throughRound}`;
-document.getElementById('tbl-r13').innerHTML =
-  `<thead><tr><th>#</th><th>Team</th><th class="num">Points</th></tr></thead><tbody>`+
-  DATA.latestRound.map((r,i)=>`<tr${r[0]===ME.name?' class="me"':''}><td><span class="rankpill">${i+1}</span></td><td>${r[0]}</td><td class="num">${r[1].toFixed(1)}</td></tr>`).join('')+`</tbody>`;
+function renderLatestRound(div){
+  const rows = div==='tit' ? (DATA.latestRoundTitleist||[]) : (DATA.latestRound||[]);
+  const label = DIVNAME[div];
+  if (!rows.length){
+    document.getElementById('latest-note').textContent = `No ${label} round-by-round data tracked yet.`;
+    document.getElementById('tbl-r13').innerHTML = '';
+    return;
+  }
+  document.getElementById('latest-note').textContent = `${label} team points earned in the most recent round.`;
+  document.getElementById('tbl-r13').innerHTML =
+    `<thead><tr><th>#</th><th>Team</th><th class="num">Points</th></tr></thead><tbody>`+
+    rows.map((r,i)=>`<tr${r[0]===ME.name?' class="me"':''}><td><span class="rankpill">${i+1}</span></td><td>${r[0]}</td><td class="num">${r[1].toFixed(1)}</td></tr>`).join('')+`</tbody>`;
+}
+renderLatestRound('cal');
+wirePills('latest-pills', d => renderLatestRound(d));
 
 // ---- Player Stats sortable table (division filter, defaults to Callaway) ----
 const pCols = ['Player','Division','Eagle+','Birdies','Pars','Bogeys','Doubles','Triple+'];
