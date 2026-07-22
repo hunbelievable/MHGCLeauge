@@ -102,9 +102,9 @@ a{color:var(--blue)}
 </section>
 
 <section id="playoffs">
+  <div class="next" id="playoff-summary"></div>
   <div class="pills" id="playoff-pills"><button data-d="cal" class="on">Callaway</button><button data-d="tit">Titleist</button></div>
   <div id="playoff-cal">
-  <div class="next" id="playoff-summary"></div>
   <h2>Shootout Projection — Callaway Division</h2>
   <p class="note" id="playoff-note"></p>
   <div class="card"><table id="tbl-playoffs"></table></div>
@@ -222,11 +222,91 @@ a{color:var(--blue)}
 <footer>Data scraped from <a href="https://mhgc-tuesdaynightleague.golfgenius.com/">Golf Genius (GGID WCD5CH)</a> · Last updated <span id="upd"></span> · Ask Claude to refresh after each week's round.</footer>
 
 <script>
-const M = DATA.meta, ME = DATA.myTeam;
+const M = DATA.meta;
 const rl = M.roundLabels.map(s=>s.split("\n"));
 document.getElementById('subhead').textContent = `${M.club} · through ${M.throughRound} · GGID ${M.ggid}`;
 document.getElementById('upd').textContent = M.lastUpdated;
 document.getElementById('tit-asof').textContent = M.titleistAsOf || '';
+
+// ---- Personal preference, per browser — nobody's team/player is baked
+// into the shared file. Every visitor can pick their own and it's
+// remembered only on their own device, never affecting anyone else's view. ----
+function readPref(key){ try { return localStorage.getItem(key); } catch(e){ return null; } }
+function writePref(key, val){ try { localStorage.setItem(key, val); } catch(e){} }
+
+// ---- Tabs ----
+document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{
+  document.querySelectorAll('nav button').forEach(x=>x.classList.remove('active'));
+  document.querySelectorAll('section').forEach(x=>x.classList.remove('visible'));
+  b.classList.add('active');
+  document.getElementById(b.dataset.t).classList.add('visible');
+});
+
+// ---- Division membership ----
+const CAL = new Set(DATA.standings.callaway.map(r=>r[0]));
+const TIT = new Set(DATA.standings.titleist.map(r=>r[0]));
+const teamDiv = t => CAL.has(t) ? 'cal' : TIT.has(t) ? 'tit' : 'sub';
+const playerDiv = {};
+const allPlayers = [];
+for (const [rows, d] of [[DATA.standings.callaway,'cal'], [DATA.standings.titleist,'tit']])
+  rows.forEach(r => r[0].split(' + ').forEach(p => {
+    p = p.trim();
+    playerDiv[p] = d;
+    allPlayers.push(p);
+  }));
+allPlayers.sort();
+const DIVNAME = {cal:'Callaway', tit:'Titleist', sub:'Sub / fill-in'};
+
+// ---- All teams, both divisions, tagged with division ----
+const ALL_TEAMS = [
+  ...DATA.teams.map(t=>({...t, division:'cal'})),
+  ...(DATA.titleistTeams||[]).map(t=>({...t, division:'tit'})),
+];
+const teamByName = Object.fromEntries(ALL_TEAMS.map(t=>[t.name, t]));
+// Titleist weekly tracking started mid-season, so its arrays only cover the
+// most recent N rounds — align them against the trailing N round labels
+// rather than assuming they start at round 2 like Callaway's do.
+const roundLabelsFor = wk => rl.slice(rl.length - wk.length);
+
+// ---- Current team/player — no default favorite. Falls back to the
+// Callaway leader and the alphabetically-first player on a first visit,
+// then remembers whatever each viewer actually picks from here on. ----
+const DEFAULT_TEAM = (DATA.teams.find(t=>t.rank===1) || DATA.teams[0] || {}).name;
+const DEFAULT_PLAYER = allPlayers[0];
+let currentTeam = (() => { const p = readPref('tnl_team'); return (p && teamByName[p]) ? p : DEFAULT_TEAM; })();
+let currentPlayer = (() => { const p = readPref('tnl_player'); return (p && allPlayers.includes(p)) ? p : DEFAULT_PLAYER; })();
+
+function wirePills(id, fn){
+  const box = document.getElementById(id);
+  box.querySelectorAll('button').forEach(b => b.onclick = () => {
+    box.querySelectorAll('button').forEach(x=>x.classList.remove('on'));
+    b.classList.add('on'); fn(b.dataset.d);
+  });
+}
+
+// ---- Chart helper (destroys prior instance on same canvas so pivots can re-render) ----
+const chartInstances = {};
+function mkChart(id, cfg){
+  try {
+    if (chartInstances[id]) { chartInstances[id].destroy(); delete chartInstances[id]; }
+    const inst = new Chart(document.getElementById(id), cfg);
+    chartInstances[id] = inst;
+    return inst;
+  } catch(e){
+    console.error('chart failed:', id, e);
+    const el = document.getElementById(id);
+    if(el && el.parentNode) el.parentNode.innerHTML = '<p style="color:var(--muted);padding:20px">Chart could not render ('+e.message+')</p>';
+  }
+}
+try{
+  Chart.defaults.color = '#8fa89b';
+  Chart.defaults.borderColor = '#2a3d33';
+  Chart.defaults.font.size = 11;
+}catch(e){console.error('Chart.js missing', e);}
+const palette = ['#e8c468','#6aa9e0','#b58ce0','#4caf7d','#e07a6b','#5fc9c4','#d087b5','#9aa85f'];
+const shortName = t => t.replace(/, \w[\w ]* \+ /,'/').replace(/, \w[\w ]*$/,'');
+const lastName = n => n.split(',')[0].trim();
+const ordinal = n => { const s=['th','st','nd','rd'], v=n%100; return n + (s[(v-20)%10] || s[v] || s[0]); };
 
 // ---- KPIs (reactive to the Team/Player pivot selected below) ----
 function renderBannerTeam(name){
@@ -260,77 +340,15 @@ function renderBannerPlayer(name){
   document.getElementById('kpis-player').innerHTML = kp.map(k=>`<div class="kpi"><div class="v ${k[2]||''}">${k[0]}</div><div class="l">${k[1]}</div></div>`).join('');
 }
 
-// ---- Tabs ----
-document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{
-  document.querySelectorAll('nav button').forEach(x=>x.classList.remove('active'));
-  document.querySelectorAll('section').forEach(x=>x.classList.remove('visible'));
-  b.classList.add('active');
-  document.getElementById(b.dataset.t).classList.add('visible');
-});
-
 // ---- Standings tables ----
 function standingsTableSimple(el, rows){
   el.innerHTML = `<thead><tr><th>#</th><th>Team</th><th class="num">Total Points</th></tr></thead><tbody>` +
-    rows.map((r,i)=>`<tr${r[0]===ME.name?' class="me"':''}><td><span class="rankpill">${i+1}</span></td><td>${r[0]}</td><td class="num">${r[1].toFixed(1)}</td></tr>`).join('')+`</tbody>`;
+    rows.map((r,i)=>`<tr${r[0]===currentTeam?' class="me"':''}><td><span class="rankpill">${i+1}</span></td><td>${r[0]}</td><td class="num">${r[1].toFixed(1)}</td></tr>`).join('')+`</tbody>`;
 }
-standingsTableSimple(document.getElementById('tbl-cal'), DATA.standings.callaway);
-standingsTableSimple(document.getElementById('tbl-tit'), DATA.standings.titleist);
-
-// ---- Division membership ----
-const CAL = new Set(DATA.standings.callaway.map(r=>r[0]));
-const TIT = new Set(DATA.standings.titleist.map(r=>r[0]));
-const teamDiv = t => CAL.has(t) ? 'cal' : TIT.has(t) ? 'tit' : 'sub';
-const playerDiv = {};
-const allPlayers = [];
-for (const [rows, d] of [[DATA.standings.callaway,'cal'], [DATA.standings.titleist,'tit']])
-  rows.forEach(r => r[0].split(' + ').forEach(p => {
-    p = p.trim();
-    playerDiv[p] = d;
-    allPlayers.push(p);
-  }));
-allPlayers.sort();
-const DIVNAME = {cal:'Callaway', tit:'Titleist', sub:'Sub / fill-in'};
-
-// ---- All teams, both divisions, tagged with division ----
-const ALL_TEAMS = [
-  ...DATA.teams.map(t=>({...t, division:'cal'})),
-  ...(DATA.titleistTeams||[]).map(t=>({...t, division:'tit'})),
-];
-const teamByName = Object.fromEntries(ALL_TEAMS.map(t=>[t.name, t]));
-// Titleist weekly tracking started mid-season, so its arrays only cover the
-// most recent N rounds — align them against the trailing N round labels
-// rather than assuming they start at round 2 like Callaway's do.
-const roundLabelsFor = wk => rl.slice(rl.length - wk.length);
-
-function wirePills(id, fn){
-  const box = document.getElementById(id);
-  box.querySelectorAll('button').forEach(b => b.onclick = () => {
-    box.querySelectorAll('button').forEach(x=>x.classList.remove('on'));
-    b.classList.add('on'); fn(b.dataset.d);
-  });
+function renderStandings(){
+  standingsTableSimple(document.getElementById('tbl-cal'), DATA.standings.callaway);
+  standingsTableSimple(document.getElementById('tbl-tit'), DATA.standings.titleist);
 }
-
-// ---- Chart helper (destroys prior instance on same canvas so pivots can re-render) ----
-const chartInstances = {};
-function mkChart(id, cfg){
-  try {
-    if (chartInstances[id]) { chartInstances[id].destroy(); delete chartInstances[id]; }
-    const inst = new Chart(document.getElementById(id), cfg);
-    chartInstances[id] = inst;
-    return inst;
-  } catch(e){
-    console.error('chart failed:', id, e);
-    const el = document.getElementById(id);
-    if(el && el.parentNode) el.parentNode.innerHTML = '<p style="color:var(--muted);padding:20px">Chart could not render ('+e.message+')</p>';
-  }
-}
-try{
-  Chart.defaults.color = '#8fa89b';
-  Chart.defaults.borderColor = '#2a3d33';
-  Chart.defaults.font.size = 11;
-}catch(e){console.error('Chart.js missing', e);}
-const palette = ['#e8c468','#6aa9e0','#b58ce0','#4caf7d','#e07a6b','#5fc9c4','#d087b5','#9aa85f'];
-const shortName = t => t.replace(/, \w[\w ]* \+ /,'/').replace(/, \w[\w ]*$/,'');
 
 // ---- Playoff projection engine — same real drop-2 rule for both divisions ----
 // Every team's weekly array now comes straight from the league's own
@@ -368,33 +386,42 @@ function renderShootoutTable(tblId, proj, cut){
     `<thead><tr><th>Proj #</th><th>Team</th><th class="num">Current</th><th class="num">Avg/wk</th><th class="num">Drop weeks</th><th class="num">If drops applied today</th><th class="num">Projected final (13 of 15)</th><th class="num">vs cut</th></tr></thead><tbody>`+
     proj.map((r,i)=>{
       const d = r.proj - cut;
-      const cls = r.team===ME.name?' class="me"':'';
+      const cls = r.team===currentTeam?' class="me"':'';
       const cutRow = i===S.playoffSpots-1 ? ' style="border-bottom:2px solid var(--gold)"' : '';
       return `<tr${cls}${cutRow}><td><span class="rankpill">${i+1}</span></td><td>${r.team}${i<S.playoffSpots?' <span title="projected in" style="color:var(--gold)">★</span>':''}</td><td class="num">${r.total.toFixed(1)}</td><td class="num">${r.avg.toFixed(1)}</td><td class="num" style="color:var(--muted)">${r.drops.map(x=>x.toFixed(1)).join(', ')}</td><td class="num">${r.drop2now.toFixed(1)}</td><td class="num"><b>${r.proj.toFixed(1)}</b></td><td class="num ${d>=0?'w':'l'}">${d>=0?'+':''}${d.toFixed(1)}</td></tr>`;
     }).join('')+`</tbody>`;
 }
 
-// ---- Playoffs tab render — Callaway (has the personal "your team" banner) ----
-(function(){
+// ---- Playoffs tab — personal summary reflects whichever team is
+// currently selected, in either division, not a fixed favorite. ----
+function renderPlayoffSummary(){
+  const t = teamByName[currentTeam];
+  const p = projFor(t.division)[currentTeam];
+  const el = document.getElementById('playoff-summary');
+  if (!p){
+    el.innerHTML = `<b>${currentTeam}</b> (${DIVNAME[t.division]}) — no weekly history on file yet for a shootout projection.`;
+    return;
+  }
+  const cut = cutFor(t.division), inOut = p.projRank <= M.season.playoffSpots ? 'projected IN' : 'projected OUT';
+  el.innerHTML = `<b>${currentTeam}</b> (${DIVNAME[t.division]}) — <b>${inOut}</b> the shootout, projected ${ordinal(p.projRank)} at ${p.proj.toFixed(1)} pts after drops (cut ≈ ${cut.toFixed(1)}). Drop weeks so far: ${p.drops.map(d=>d.toFixed(1)).join(' and ')}.`;
+}
+
+function renderPlayoffsCallaway(){
   const S = M.season, remain = S.scoringWeeks - S.playedWeeks;
-  const meIdx = PROJ.findIndex(r=>r.team===ME.name);
-  const me = PROJ[meIdx];
-  document.getElementById('playoff-summary').innerHTML =
-    `<b>Projected: ${meIdx<S.playoffSpots?'IN the shootout':'OUT'}</b> — your team projects ${meIdx+1}${['st','nd','rd'][meIdx]||'th'} at ${me.proj.toFixed(1)} pts after drops (cut line ≈ ${CUT.toFixed(1)}). Your drop weeks so far: ${me.drops.map(d=>d.toFixed(1)).join(' and ')}.`;
   document.getElementById('playoff-note').textContent =
     `${S.playedWeeks} of ${S.scoringWeeks} scoring weeks played, ${remain} to go. Top ${S.playoffSpots} after drops advance to the ${S.shootoutDate} shootout.`;
   renderShootoutTable('tbl-playoffs', PROJ, CUT);
-})();
+}
+renderPlayoffsCallaway();
 wirePills('playoff-pills', d => {
   document.getElementById('playoff-cal').style.display = d==='cal' ? '' : 'none';
   document.getElementById('playoff-tit').style.display = d==='tit' ? '' : 'none';
 });
 
-// ---- Playoffs tab render — Titleist ----
 // Falls back to a plain current-standings view only if weekly tracking
 // somehow has zero weeks on file (e.g. every team's history fetch failed
 // on the same run) — the normal case is the same real projection table.
-(function(){
+function renderPlayoffsTitleist(){
   const S = M.season, remain = S.scoringWeeks - S.playedWeeks;
   if (TIT_WEEKS_TRACKED === 0){
     document.getElementById('playoff-tit-h').textContent = 'Shootout Race — Titleist Division (current standings)';
@@ -414,18 +441,16 @@ wirePills('playoff-pills', d => {
       `${S.playedWeeks} of ${S.scoringWeeks} scoring weeks played, ${remain} to go. Top ${S.playoffSpots} after drops advance to the ${S.shootoutDate} shootout.`;
     renderShootoutTable('tbl-playoffs-tit', PROJ_TIT, CUT_TIT);
   }
-})();
+}
+renderPlayoffsTitleist();
 
 // ---- Points Race tab (pivotable highlight, either division) ----
 const teamSelectOptionsHTML =
   `<optgroup label="Callaway">${DATA.teams.map(t=>`<option value="${t.name}">#${t.rank} — ${t.name}</option>`).join('')}</optgroup>` +
   `<optgroup label="Titleist">${(DATA.titleistTeams||[]).map(t=>`<option value="${t.name}">#${t.rank} — ${t.name}</option>`).join('')}</optgroup>`;
-const raceTeamSelect = document.getElementById('race-team-select');
-raceTeamSelect.innerHTML = teamSelectOptionsHTML;
-raceTeamSelect.value = ME.name;
 
-function renderRace(highlightName){
-  const div = teamByName[highlightName].division;
+function renderRace(){
+  const div = teamByName[currentTeam].division;
   document.getElementById('race-h').textContent = `Season Points Race — ${DIVNAME[div]}`;
   const pool = ALL_TEAMS.filter(t=>t.division===div);
   if (!pool.length || !pool[0].weekly.length){
@@ -440,13 +465,13 @@ function renderRace(highlightName){
   document.getElementById('race-note').textContent = 'Top 8 by current points, plus your selected team if it\'s outside the top 8.';
   const byTotal = [...pool].sort((a,b)=>b.total-a.total);
   let chosen = byTotal.slice(0,8);
-  if (!chosen.some(t=>t.name===highlightName)){
-    chosen = chosen.slice(0,7).concat(pool.find(t=>t.name===highlightName));
+  if (!chosen.some(t=>t.name===currentTeam)){
+    chosen = chosen.slice(0,7).concat(pool.find(t=>t.name===currentTeam));
   }
   const divRl = roundLabelsFor(chosen[0].weekly);
   const raceDs = chosen.map((t,i)=>{
     let c=0; const cum=t.weekly.map(w=>+(c+=w).toFixed(1));
-    const hi = t.name===highlightName;
+    const hi = t.name===currentTeam;
     return {label:shortName(t.name), data:cum,
       borderColor: hi?'#4caf7d':palette[i%palette.length], backgroundColor:'transparent',
       borderWidth: hi?4:2, pointRadius: hi?3:2, tension:.25};
@@ -460,22 +485,24 @@ function renderRace(highlightName){
   mkChart('ch-weekly',{type:'bar',
     data:{labels:divRl.map(x=>x[0]), datasets:chosen.map((t,i)=>({
       label:shortName(t.name), data:t.weekly,
-      backgroundColor:t.name===highlightName?'#4caf7d':palette[i%palette.length]+'99'}))},
+      backgroundColor:t.name===currentTeam?'#4caf7d':palette[i%palette.length]+'99'}))},
     options:{maintainAspectRatio:false,
       plugins:{legend:{position:'bottom',labels:{boxWidth:12,padding:10}},
         tooltip:{callbacks:{title:i=>divRl[i[0].dataIndex].join(' · ')}}},
       scales:{y:{title:{display:true,text:'Weekly points (of 27)'}}}}});
 }
-renderRace(ME.name);
-raceTeamSelect.onchange = () => renderRace(raceTeamSelect.value);
 
-// ---- Team tab (pivotable) ----
-const teamSelect = document.getElementById('team-select');
-teamSelect.innerHTML = teamSelectOptionsHTML;
-teamSelect.value = ME.name;
+// ---- Team tab (pivotable) — every team gets the same opponent detail now,
+// straight from the league's own per-team history page. ----
+function pairingNote(pairings){
+  return (pairings||[]).map(p=>{
+    const res = p.us>p.them?'W':p.us<p.them?'L':'T';
+    return `${lastName(p.player)}: ${res} ${p.us.toFixed(1)}–${p.them.toFixed(1)} vs ${lastName(p.opp)}`;
+  }).join(' · ');
+}
 
-function renderTeam(name){
-  const t = teamByName[name];
+function renderTeam(){
+  const name = currentTeam, t = teamByName[name];
   const div = t.division, divLabel = DIVNAME[div];
   const wk = t.weekly;
   const trackedAvg = wk.length ? wk.reduce((a,b)=>a+b,0)/wk.length : null;
@@ -503,12 +530,12 @@ function renderTeam(name){
 
   const detailH = document.getElementById('team-detail-h');
   const tbl = document.getElementById('tbl-team-detail');
-  if (name === ME.name){
+  if (t.matchups && t.matchups.length){
     detailH.textContent = 'Weekly Results — with opponents';
-    tbl.innerHTML = `<thead><tr><th>Round</th><th>Opponent</th><th class="num">Us</th><th class="num">Them</th><th>Result</th><th>Note</th></tr></thead><tbody>`+
-      ME.matchups.map(m=>{
+    tbl.innerHTML = `<thead><tr><th>Round</th><th>Opponent</th><th class="num">Us</th><th class="num">Them</th><th>Result</th><th>Matchups</th></tr></thead><tbody>`+
+      t.matchups.map(m=>{
         const res = m.us>m.them?'<span class="w">W</span>':m.us<m.them?'<span class="l">L</span>':'<span class="t">T</span>';
-        return `<tr><td style="white-space:nowrap">${m.round} · ${m.date}</td><td>${m.opp}</td><td class="num">${m.us.toFixed(1)}</td><td class="num">${m.them.toFixed(1)}</td><td>${res}</td><td>${m.rusty}</td></tr>`;
+        return `<tr><td style="white-space:nowrap">${m.round} · ${m.date}</td><td>${m.opp}</td><td class="num">${m.us.toFixed(1)}</td><td class="num">${m.them.toFixed(1)}</td><td>${res}</td><td>${pairingNote(m.pairings)}</td></tr>`;
       }).join('')+`</tbody>`;
   } else if (!wk.length){
     detailH.textContent = 'Weekly Results';
@@ -524,14 +551,6 @@ function renderTeam(name){
       }).join('')+`</tbody>`;
   }
 }
-function setTeam(name){
-  teamSelect.value = name;
-  document.getElementById('banner-team-select').value = name;
-  renderTeam(name);
-  renderBannerTeam(name);
-}
-renderTeam(ME.name);
-teamSelect.onchange = () => setTeam(teamSelect.value);
 
 document.getElementById('tbl-upcoming').innerHTML =
   `<thead><tr><th>Round</th><th>Date</th></tr></thead><tbody>`+
@@ -545,9 +564,6 @@ function playerOptionsHTML(withStar){
     `<optgroup label="${DIVNAME[d]}">${byDiv[d].map(p=>`<option value="${p}">${p}${withStar&&DATA.playerDetail[p]?' ★':''}</option>`).join('')}</optgroup>`
   ).join('');
 }
-const playerSelect = document.getElementById('player-select');
-playerSelect.innerHTML = playerOptionsHTML(false);
-playerSelect.value = 'Holiday, Rusty';
 
 function scClass(s,p){const d=s-p;if(d<=-2)return'sc-eagle';if(d===-1)return'sc-birdie';if(d===0)return'sc-par';if(d===1)return'sc-bogey';if(d===2)return'sc-double';return'sc-triple';}
 
@@ -621,37 +637,20 @@ function renderPlayerBasic(name){
   note.textContent = `No full round-by-round scorecard for ${name} yet ${reason}. This chart shows their season-long hole outcomes from the league's Player Stats page instead.`;
 }
 
-function renderPlayer(name){
+function renderPlayer(){
+  const name = currentPlayer;
   const hasDetail = !!DATA.playerDetail[name];
   document.getElementById('player-detail-view').style.display = hasDetail ? '' : 'none';
   document.getElementById('player-basic-view').style.display = hasDetail ? 'none' : '';
   if (hasDetail) renderPlayerDetail(DATA.playerDetail[name]);
   else renderPlayerBasic(name);
 }
-function setPlayer(name){
-  playerSelect.value = name;
-  document.getElementById('banner-player-select').value = name;
-  renderPlayer(name);
-  renderBannerPlayer(name);
-}
-renderPlayer('Holiday, Rusty');
-playerSelect.onchange = () => setPlayer(playerSelect.value);
-
-// ---- Banner selects (drive both the KPI strip and the Team/Player tabs) ----
-const bannerTeamSelect = document.getElementById('banner-team-select');
-const bannerPlayerSelect = document.getElementById('banner-player-select');
-bannerTeamSelect.innerHTML = teamSelectOptionsHTML;
-bannerPlayerSelect.innerHTML = playerOptionsHTML(true);
-bannerTeamSelect.value = ME.name;
-bannerPlayerSelect.value = 'Holiday, Rusty';
-renderBannerTeam(ME.name);
-renderBannerPlayer('Holiday, Rusty');
-bannerTeamSelect.onchange = () => setTeam(bannerTeamSelect.value);
-bannerPlayerSelect.onchange = () => setPlayer(bannerPlayerSelect.value);
 
 // ---- Latest round (both divisions) ----
 document.getElementById('latest-h').textContent = `Team Points — ${M.throughRound}`;
+let currentLatestDiv = 'cal';
 function renderLatestRound(div){
+  currentLatestDiv = div;
   const rows = div==='tit' ? (DATA.latestRoundTitleist||[]) : (DATA.latestRound||[]);
   const label = DIVNAME[div];
   if (!rows.length){
@@ -662,9 +661,8 @@ function renderLatestRound(div){
   document.getElementById('latest-note').textContent = `${label} team points earned in the most recent round.`;
   document.getElementById('tbl-r13').innerHTML =
     `<thead><tr><th>#</th><th>Team</th><th class="num">Points</th></tr></thead><tbody>`+
-    rows.map((r,i)=>`<tr${r[0]===ME.name?' class="me"':''}><td><span class="rankpill">${i+1}</span></td><td>${r[0]}</td><td class="num">${r[1].toFixed(1)}</td></tr>`).join('')+`</tbody>`;
+    rows.map((r,i)=>`<tr${r[0]===currentTeam?' class="me"':''}><td><span class="rankpill">${i+1}</span></td><td>${r[0]}</td><td class="num">${r[1].toFixed(1)}</td></tr>`).join('')+`</tbody>`;
 }
-renderLatestRound('cal');
 wirePills('latest-pills', d => renderLatestRound(d));
 
 // ---- Player Stats sortable table (division filter, defaults to Callaway) ----
@@ -684,7 +682,7 @@ function renderPlayers(){
   });
   document.getElementById('tbl-players').innerHTML =
     `<thead><tr>${pCols.map((c,i)=>`<th class="${i>1?'num ':''}${pSort.col===i?'sorted':''}" data-c="${i}">${c}${pSort.col===i?(pSort.dir<0?' ▾':' ▴'):''}</th>`).join('')}</tr></thead><tbody>`+
-    rows.map(p=>`<tr${p[0]==='Holiday, Rusty'?' class="me"':''}><td>${p[0]}</td><td style="color:var(--muted)">${DIVNAME[pDivOf(p)]}</td>${p.slice(1).map(v=>`<td class="num">${v}</td>`).join('')}</tr>`).join('')+`</tbody>`;
+    rows.map(p=>`<tr${p[0]===currentPlayer?' class="me"':''}><td>${p[0]}</td><td style="color:var(--muted)">${DIVNAME[pDivOf(p)]}</td>${p.slice(1).map(v=>`<td class="num">${v}</td>`).join('')}</tr>`).join('')+`</tbody>`;
   document.querySelectorAll('#tbl-players th').forEach(th=>th.onclick=()=>{
     const c=+th.dataset.c;
     if(pSort.col===c) pSort.dir*=-1; else {pSort.col=c; pSort.dir=c<=1?1:-1;}
@@ -693,7 +691,51 @@ function renderPlayers(){
 }
 document.getElementById('pfilter').oninput = renderPlayers;
 document.getElementById('pdiv').onchange = renderPlayers;
-renderPlayers();
+
+// ---- Selection wiring: every selector (banner + tab-local) shares one
+// source of truth for "my" team/player, persisted only to this viewer's
+// own browser, and re-renders everywhere that reflects it. ----
+const teamSelect = document.getElementById('team-select');
+const raceTeamSelect = document.getElementById('race-team-select');
+const bannerTeamSelect = document.getElementById('banner-team-select');
+const playerSelect = document.getElementById('player-select');
+const bannerPlayerSelect = document.getElementById('banner-player-select');
+
+teamSelect.innerHTML = teamSelectOptionsHTML;
+raceTeamSelect.innerHTML = teamSelectOptionsHTML;
+bannerTeamSelect.innerHTML = teamSelectOptionsHTML;
+playerSelect.innerHTML = playerOptionsHTML(false);
+bannerPlayerSelect.innerHTML = playerOptionsHTML(true);
+
+function setTeam(name){
+  currentTeam = name;
+  writePref('tnl_team', name);
+  [bannerTeamSelect, teamSelect, raceTeamSelect].forEach(sel => sel.value = name);
+  renderBannerTeam(name);
+  renderStandings();
+  renderPlayoffSummary();
+  renderShootoutTable('tbl-playoffs', PROJ, CUT);
+  if (TIT_WEEKS_TRACKED > 0) renderShootoutTable('tbl-playoffs-tit', PROJ_TIT, CUT_TIT);
+  renderRace();
+  renderTeam();
+  renderLatestRound(currentLatestDiv);
+}
+function setPlayer(name){
+  currentPlayer = name;
+  writePref('tnl_player', name);
+  [bannerPlayerSelect, playerSelect].forEach(sel => sel.value = name);
+  renderPlayer();
+  renderBannerPlayer(name);
+  renderPlayers();
+}
+teamSelect.onchange = () => setTeam(teamSelect.value);
+raceTeamSelect.onchange = () => setTeam(raceTeamSelect.value);
+bannerTeamSelect.onchange = () => setTeam(bannerTeamSelect.value);
+playerSelect.onchange = () => setPlayer(playerSelect.value);
+bannerPlayerSelect.onchange = () => setPlayer(bannerPlayerSelect.value);
+
+setTeam(currentTeam);
+setPlayer(currentPlayer);
 </script>
 </body>
 </html>

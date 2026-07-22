@@ -137,15 +137,20 @@ def test_parse_team_rounds():
 
 
 def test_parse_team_matchups():
-    matchups = parse_team_matchups(TEAM_INFO_HTML, "Holiday, Rusty")
+    matchups = parse_team_matchups(TEAM_INFO_HTML)
     assert len(matchups) == 2
     r2, r8 = matchups
     assert r2.opponent == "Long, Mitchell + Pick, Connor"
     assert r2.us == 18.0 and r2.them == 9.0
-    assert r2.note == "W 5.5–3.5 vs Long"
-    # Round 8: Rusty was subbed out for Stoakes — no individual row for him.
+    assert len(r2.pairings) == 2
+    assert r2.pairings[0].player == "Holiday, Rusty"
+    assert r2.pairings[0].opponent == "Long, Mitchell"
+    assert r2.pairings[0].us == 5.5 and r2.pairings[0].them == 3.5
+    assert r2.pairings[1].player == "Phillips, Nick"
+    # Round 8: Rusty was subbed out for Stoakes — pairings show whoever
+    # actually played, no single "watched" player assumed.
     assert r8.opponent == "Fricke, Jeff + Fries, Ryan"
-    assert r8.note == "Sat out (sub: Stoakes)"
+    assert {p.player for p in r8.pairings} == {"Phillips, Nick", "Stoakes, Gabe"}
 
 
 def test_parse_division_options():

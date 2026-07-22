@@ -13,27 +13,25 @@ Usage:
     python3 scripts/scrape_to_league_data.py --dump-html ./dump # save raw HTML too
     python3 scripts/scrape_to_league_data.py --add-player "Doe, Jane"
 
-What this derives from the site every run, at full parity between Callaway
-and Titleist:
-    - team standings (rank, current total) for both divisions
+What this derives from the site every run, identically for every one of the
+56 teams across both divisions — nobody's team gets richer data than anyone
+else's:
+    - team standings (rank, current total)
+    - full round-by-round points history, straight from the league's own
+      per-team history page (`team_standings/team_info`) — every round back
+      to Round 2, not reconstructed by diffing successive totals
+    - full per-round match detail from that same page: opponent, team
+      us/them points, and both individual A-vs-A/B-vs-B player pairings
+      (whoever actually played, subs included)
     - the full player roster's season hole-outcome totals (playerStats)
-    - full round-by-round scorecards for every player on a Callaway or
-      Titleist team roster, plus anyone added via --add-player
-
-Team weekly-points history comes straight from the league's own per-team
-history page (`team_standings/team_info`) — every round back to Round 2,
-for any team in any division — not reconstructed by diffing successive
-totals. That page also embeds full match detail (opponent, A-vs-A/B-vs-B
-pairings), which is what auto-fills myTeam.matchups (including the
-personal "W 5.5-3.5 vs Long" / "Sat out (sub: X)" note) — no more manual
-entry needed there either.
+    - full round-by-round scorecards for every player on a team roster,
+      plus anyone added via --add-player
 
 Fetching all 112 teams' full history is expensive (one request per team,
 same as the 112 player-detail fetches), so it's skipped unless something
 actually changed: a team's current total differs from last save, a team
-has no history on file yet (first run under this scheme), or --force.
-Otherwise only playerStats/playerDetail refresh (the cheap, always-useful
-path) and team history/matchups are left as they were.
+has no history on file yet, or --force. Otherwise only playerStats/
+playerDetail refresh (the cheap, always-useful path).
 
 What it CANNOT derive, because no page ggscrape reads exposes it, and
 carries forward unchanged from the existing file instead:
@@ -95,6 +93,15 @@ def full_date_with_weekday(date_str: str) -> str:
     return f"Tue, {month} {int(m.group(2))}"
 
 
+def matchups_to_json(matchups) -> list:
+    return [
+        {"round": f"R{m.round_num}", "date": short_date(m.date), "opp": m.opponent,
+         "us": m.us, "them": m.them,
+         "pairings": [{"player": p.player, "opp": p.opponent, "us": p.us, "them": p.them} for p in m.pairings]}
+        for m in matchups
+    ]
+
+
 def build_player_detail(gg) -> dict:
     hole_by_round = {h.round_num: h for h in gg.hole_rounds}
     rounds = []
@@ -137,25 +144,20 @@ def find_member(roster, name: str):
     return matches[0] if len(matches) == 1 else None
 
 
-def fetch_division_history(client, league_id, page_id, teams, teamset_id, sequence_id,
-                            watch_player, warnings, label):
-    """Fetch every team's ground-truth round history (and matchups, for
-    watch_player's team) in this division. Returns (team_rows, matchups)."""
+def fetch_division_history(client, league_id, page_id, teams, teamset_id, sequence_id, warnings, label):
+    """Fetch every team's ground-truth round history and full match detail —
+    the same two requests-worth of data for every team, nobody privileged."""
     team_rows = []
-    matchups = []
     for t in teams:
-        wp = watch_player if watch_player in t.members else None
         try:
-            rounds, m = fetch_team_history(client, league_id, page_id, t.team_id, teamset_id,
-                                            sequence_id, watch_player=wp)
+            rounds, matchups = fetch_team_history(client, league_id, page_id, t.team_id, teamset_id, sequence_id)
         except Exception as e:
             warnings.append(f"Failed to fetch {label} team history for {t.name!r} ({e}) — skipping, weekly history for this team may go stale.")
             continue
         team_rows.append({"name": t.name, "rank": t.rank, "total": t.total_points,
-                           "weekly": [r.points for r in rounds], "rounds": rounds})
-        if wp:
-            matchups = m
-    return team_rows, matchups
+                           "weekly": [r.points for r in rounds], "matchups": matchups_to_json(matchups),
+                           "rounds": rounds})
+    return team_rows
 
 
 def main():
@@ -170,8 +172,6 @@ def main():
     ap.add_argument("--dry-run", action="store_true", help="Print the result instead of writing it")
     ap.add_argument("--force", action="store_true",
                      help="Re-fetch every team's full history even if nothing looks changed")
-    ap.add_argument("--watch-player", default="Holiday, Rusty",
-                     help="Whose personal note to build for myTeam.matchups (default: Holiday, Rusty)")
     args = ap.parse_args()
 
     infile = Path(args.infile)
@@ -179,6 +179,7 @@ def main():
 
     prev = json.loads(infile.read_text())
     data = copy.deepcopy(prev)
+    data.pop("myTeam", None)  # replaced by a client-side preferred-team picker; every team's data is equal now
     warnings = []
 
     client = Client(args.base_url, delay=args.delay, dump_dir=args.dump_html)
@@ -205,7 +206,9 @@ def main():
         for t in live_tit if t.name in prev_tit_by_name
     )
     missing_history = any(not prev_tit_by_name.get(t.name, {}).get("weekly") for t in live_tit) or \
-        any(not prev_cal_by_name.get(t.name, {}).get("weekly") for t in live_cal)
+        any(not prev_cal_by_name.get(t.name, {}).get("weekly") for t in live_cal) or \
+        any("matchups" not in prev_tit_by_name.get(t.name, {}) for t in live_tit) or \
+        any("matchups" not in prev_cal_by_name.get(t.name, {}) for t in live_cal)
     do_full_refresh = args.force or any_total_changed or missing_history
 
     if not do_full_refresh:
@@ -227,10 +230,8 @@ def main():
         data["callawayWeekly"] = {t["name"]: t["weekly"] for t in data["teams"]}
         data["titleistWeekly"] = {t["name"]: t["weekly"] for t in data["titleistTeams"]}
     else:
-        cal_rows, cal_matchups = fetch_division_history(
-            client, site.league_id, pid, live_cal, cal_teamset, seq, args.watch_player, warnings, "Callaway")
-        tit_rows, _ = fetch_division_history(
-            client, site.league_id, pid, live_tit, tit_teamset, seq, None, warnings, "Titleist")
+        cal_rows = fetch_division_history(client, site.league_id, pid, live_cal, cal_teamset, seq, warnings, "Callaway")
+        tit_rows = fetch_division_history(client, site.league_id, pid, live_tit, tit_teamset, seq, warnings, "Titleist")
 
         # meta bookkeeping is derived from the real per-round dates we just fetched, not guessed.
         round_dates = {}
@@ -258,7 +259,8 @@ def main():
             warnings.append("Couldn't find any round data on the team history pages — meta left unchanged.")
 
         def strip(rows):
-            return [{"name": r["name"], "rank": r["rank"], "total": r["total"], "weekly": r["weekly"]} for r in rows]
+            return [{"name": r["name"], "rank": r["rank"], "total": r["total"],
+                      "weekly": r["weekly"], "matchups": r["matchups"]} for r in rows]
 
         def latest_round_leaderboard(rows):
             board = []
@@ -280,28 +282,7 @@ def main():
             data["latestRound"] = latest_round_leaderboard(cal_rows)
             data["latestRoundTitleist"] = latest_round_leaderboard(tit_rows)
 
-        if cal_matchups:
-            # "rusty" is the field name dashboard-template.html reads for the
-            # personal note, regardless of who --watch-player actually is.
-            data["myTeam"]["matchups"] = [
-                {"round": f"R{m.round_num}", "date": short_date(m.date), "opp": m.opponent,
-                 "us": m.us, "them": m.them, "rusty": m.note}
-                for m in cal_matchups
-            ]
-        else:
-            warnings.append(f"Could not build matchups for {args.watch_player!r} (not found on any Callaway team roster this run) — myTeam.matchups left unchanged.")
-
     data.pop("round13", None)  # old per-round-number key name; dashboard now reads "latestRound"
-
-    # ---- myTeam rank/total/weekly ----
-    my_name = prev["myTeam"]["name"]
-    my_team = next((t for t in data["teams"] if t["name"] == my_name), None)
-    if my_team is None:
-        warnings.append(f"Your team {my_name!r} not found in live standings — myTeam left unchanged.")
-    else:
-        data["myTeam"]["rank"] = my_team["rank"]
-        data["myTeam"]["points"] = my_team["total"]
-        data["myTeam"]["weekly"] = my_team["weekly"]
 
     # ---- roster -> playerStats ----
     roster_url = client.widget_url(site.league_id, "player_stats", site.page_id("player stat"))
@@ -336,6 +317,12 @@ def main():
     # ---- meta housekeeping ----
     meta = data["meta"]
     meta["lastUpdated"] = dt.date.today().isoformat()
+    extra = len(set(tracked) - all_team_members)
+    meta["playerDetailNote"] = (
+        f"Full round-by-round scorecards are available for all {len(all_team_members)} Callaway and "
+        f"Titleist team-roster players." + (f" Plus {extra} sub/fill-in{'s' if extra != 1 else ''} tracked by request."
+                                             if extra else " Subs/fill-ins show season HCP/scoring totals only.")
+    )
     tit_lengths = [len(t["weekly"]) for t in data["titleistTeams"]]
     tit_weeks = max(set(tit_lengths), key=tit_lengths.count) if tit_lengths else 0  # mode, not min — a team or two
     short = sum(1 for n in tit_lengths if n < tit_weeks)                            # skipping rounds shouldn't understate everyone else's real history

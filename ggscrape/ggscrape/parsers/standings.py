@@ -159,13 +159,21 @@ class RoundResult:
 
 
 @dataclass
+class Pairing:
+    player: str
+    opponent: str
+    us: float
+    them: float
+
+
+@dataclass
 class MatchResult:
     round_num: int
     date: str
     opponent: str
     us: float
     them: float
-    note: str
+    pairings: List[Pairing]
 
 
 def _team_info_blocks(html: str):
@@ -209,21 +217,13 @@ def parse_team_rounds(html: str) -> List[RoundResult]:
     return out
 
 
-def parse_team_matchups(html: str, watch_player: str) -> List[MatchResult]:
-    """Parse full per-round opponent/result detail for one team, with a
-    personal note for `watch_player` (W/L/T + score vs their individual
-    opponent), or a 'Sat out (sub: X)' note for rounds where a substitute
-    played in their place instead.
-
-    Identifying the substitute needs care: on a bye week BOTH names in that
-    round are "not watch_player" (the regular teammate AND the sub), so a
-    naive "whichever isn't watch_player" pick is a coin flip. This does two
-    passes — first finds the *regular* teammate by which non-watch_player
-    name recurs most across the season, then anyone else is the substitute.
-    """
-    from collections import Counter
-
-    parsed, teammate_counts = [], Counter()
+def parse_team_matchups(html: str) -> List[MatchResult]:
+    """Parse full per-round opponent/result detail for one team: opponent
+    name, team-level us/them points, and both individual A-vs-A/B-vs-B
+    pairings — whoever actually played that round, subs included, with no
+    single "watched" player assumed. Works identically for any team, so
+    every team gets the same detail (not just one favorite)."""
+    out = []
     for round_num, date, us_pts, nested in _team_info_blocks(html):
         if nested is None:
             continue
@@ -235,51 +235,30 @@ def parse_team_matchups(html: str, watch_player: str) -> List[MatchResult]:
             continue
         team_a, team_b = header[1], header[3]
 
-        watch_row, us_names = None, []
+        pairings, us_names = [], []
         for r in nrows[1:3]:
             rc = [cell_text(c) for c in r.find_all(["td", "th"])]
             if len(rc) < 5:
                 continue
             us_names.append(rc[1])
-            if rc[1] == watch_player:
-                watch_row = rc
-        for n in us_names:
-            if n != watch_player:
-                teammate_counts[n] += 1
-        parsed.append((round_num, date, us_pts, team_a, team_b, watch_row, us_names))
+            pairings.append(Pairing(player=rc[1], opponent=rc[3], us=to_float(rc[0]), them=to_float(rc[4])))
 
-    regular_teammate = teammate_counts.most_common(1)[0][0] if teammate_counts else None
-
-    out = []
-    for round_num, date, us_pts, team_a, team_b, watch_row, us_names in parsed:
         opponent = team_b if any(n in team_a for n in us_names) else team_a
         them_pts = round(27 - us_pts, 2)  # league format: 27 pts split between the two teams each round
 
-        if watch_row:
-            my_pts, their_pts = to_float(watch_row[0]), to_float(watch_row[4])
-            result = "W" if my_pts > their_pts else "L" if my_pts < their_pts else "T"
-            note = f"{result} {my_pts:.1f}–{their_pts:.1f} vs {watch_row[3].split(',')[0].strip()}"
-        else:
-            sub = next((n for n in us_names if n != watch_player and n != regular_teammate), None)
-            if sub is None:
-                sub = next((n for n in us_names if n != watch_player), None)
-            note = f"Sat out (sub: {sub.split(',')[0].strip()})" if sub else "Sat out"
-
         out.append(MatchResult(round_num=round_num, date=date, opponent=opponent.strip(),
-                                us=us_pts, them=them_pts, note=note))
+                                us=us_pts, them=them_pts, pairings=pairings))
     out.sort(key=lambda r: r.round_num)
     return out
 
 
 def fetch_team_history(client, league_id: str, page_id: str, team_id: str, teamset_id: str,
-                        sequence_id: Optional[str] = None, watch_player: Optional[str] = None):
-    """Fetch one team's full round-by-round history in a single request.
-    Returns (rounds, matchups) — matchups is [] if watch_player is None."""
+                        sequence_id: Optional[str] = None):
+    """Fetch one team's full round-by-round history (points + full match
+    detail) in a single request. Returns (rounds, matchups)."""
     params = {"team": team_id, "teamset": teamset_id}
     if sequence_id:
         params["sequence"] = sequence_id
     url = client.widget_url(league_id, "team_standings/team_info", page_id, **params)
     html = client.get(url, dump_name=f"team_info_{team_id}")
-    rounds = parse_team_rounds(html)
-    matchups = parse_team_matchups(html, watch_player) if watch_player else []
-    return rounds, matchups
+    return parse_team_rounds(html), parse_team_matchups(html)

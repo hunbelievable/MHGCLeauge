@@ -1,17 +1,19 @@
 # ggscrape
 
-A CLI + Python library that reads standings, rosters, and player scorecards
-off a Golf Genius **league portal** site (the public, no-login-required kind
-— `https://<something>.golfgenius.com`) and returns clean JSON instead of a
-web page built for a browser.
+A CLI + Python library that reads standings, rosters, player scorecards,
+and full team round-by-round history (points, opponent, and per-match
+A-vs-A/B-vs-B pairing detail) off a Golf Genius **league portal** site (the
+public, no-login-required kind — `https://<something>.golfgenius.com`) and
+returns clean JSON instead of a web page built for a browser.
 
 Written against `mhgc-tuesdaynightleague.golfgenius.com`, but everything
 about *how* it finds pages (see `ggscrape/discover.py`) reads the site's own
-navigation instead of hardcoding one club's page IDs, so it should work
-against any club running the same Golf Genius template. It hasn't been
-tried against a second club's site yet — if you point it at one and
-something breaks, that's expected on the first try, see "Verification
-status" below.
+navigation instead of hardcoding one club's page IDs, and division/teamset
+IDs are discovered from the standings page's own `<select>` options (see
+`parsers/standings.py`) rather than hardcoded, so it should work against
+any club running the same Golf Genius template. It hasn't been tried
+against a second club's site yet — if you point it at one and something
+breaks, that's expected on the first try, see "Verification status" below.
 
 ## Install
 
@@ -47,57 +49,50 @@ Everything is polite by default: one request at a time, ~0.6s between
 requests (`--delay` to change it). This is someone's small club's server,
 not a CDN.
 
-## Verification status — read this before trusting the output blindly
+## Verification status
 
-This tool was built inside a sandbox that could only ever see a
-**pre-rendered text view** of these pages (tables converted to markdown,
-links converted to `[text](url)`), never the actual HTML. That text view was
-used to hand-verify the *data* extensively — every player's low-gross round,
-every round's scoring-mix counts, and full season totals were cross-checked
-against the site's own reported numbers and matched exactly, for 9 players
-and all 28 Callaway teams.
+Everything below has been run for real against the live site (not just
+hand-built fixtures) and cross-checked against the site's own reported
+numbers: standings and roster totals matched to the penny for all 28
+Callaway + 28 Titleist teams and 199 players; a team's full round-by-round
+history (`fetch_team_history`) matched its real cumulative total exactly
+for every team checked, including edge cases like a team that stopped
+playing mid-season (short history, not a parser bug) and rounds where a
+substitute played (correctly attributed via majority-vote teammate
+detection, not assumed). `player.py`'s hole-by-hole scorecard grid — the
+most structurally complex page — was the one that needed the most
+follow-up patching (a real HTML page packs two nine-blocks into a single
+`<table>`, which naive label-keyed parsing silently corrupts); it's now
+solid too.
 
-But this package talks to the site with plain `requests`, which returns raw
-HTML, not that pre-rendered text. The parsers were rewritten to read real
-HTML via BeautifulSoup, using structural heuristics (find the table whose
-header row contains "Rank" and "Team Points"; figure out whether holes 1-9
-or 10-18 are the real ones by checking which half of the row has non-blank
-values) rather than guessed CSS class names, specifically so they'd survive
-not knowing the exact markup. That's a reasonable bet, but it's a bet, it
-has only been checked against hand-built fixture HTML that matches the
-*documented* structure (see `tests/fixtures_note.md`), not the real site.
+The parsers use structural heuristics (find the table whose header row
+contains "Round Date" and "Points"; figure out whether holes 1-9 or 10-18
+are the real ones by checking which half of the row has non-blank values)
+rather than guessed CSS class names, so they should survive markup that
+differs slightly from Miracle Hill's. `tests/test_parsers.py` now uses
+fixtures built from real captured structure (see `tests/fixtures_note.md`),
+not just documented/inferred structure.
 
-Practical upshot:
-- `discover` and `standings` are lower-risk — simple, regular tables.
-- `roster` is similar.
-- `player` (the hole-by-hole scorecard grid) is the most structurally
-  complex page and the one most likely to need a follow-up patch.
-
-Run it once for real, skim the output, and if anything looks wrong (or the
-tool errors out with a "couldn't find table" message), send the
-`--dump-html` output back and it's a quick fix against real markup rather
-than more guessing.
-
-## What's not built yet
-
-Round-by-round **team** history (a team's week-by-week points, as opposed to
-a single player's), the tee sheet, and individual match/round results pages
-are not implemented. The dashboard this was built for currently gets team
-weekly history by diffing team season totals week over week rather than
-reading a dedicated widget for it — `ggscrape` doesn't do that diffing, it
-only reads pages directly.
+If you point this at a different club's site and something breaks, that's
+still expected on the first try — rerun with `--dump-html` and compare.
 
 ## Layout
 
 ```
 ggscrape/
-  fetch.py       — HTTP client (requests session, rate limiting, --dump-html)
+  fetch.py       — HTTP client (requests session, rate limiting w/ 429 backoff, --dump-html)
   discover.py    — resolve a site's league_id + nav page_ids from its homepage
   parsers/
-    standings.py — customized_team_standings widget
+    standings.py — team standings (both the "current" division and any other,
+                   discovered via the page's own <select> options), plus full
+                   per-team round-by-round history + match/pairing detail
+                   (customized_team_standings / team_standings widgets)
     roster.py    — player_stats list widget
     player.py    — player_stats/member_info widget (per-player detail)
-  cli.py         — the `ggscrape` command
+  cli.py         — the `ggscrape` command (discover/standings/roster/player —
+                   team history and other-division standings are library-only
+                   so far, used directly by scripts/scrape_to_league_data.py;
+                   no CLI subcommand for them yet)
 tests/
-  test_parsers.py — structural smoke tests against hand-built fixture HTML
+  test_parsers.py — structural smoke tests, fixtures built from real captured markup
 ```
