@@ -149,3 +149,137 @@ def fetch_division_standings(client, league_id: str, page_id: str, *division_lab
     name = "standings_" + re.sub(r"[^a-z0-9]+", "_", division_label[0].lower()) if division_label else "standings_division"
     html = client.get(url, dump_name=name)
     return parse_standings(html)
+
+
+@dataclass
+class RoundResult:
+    round_num: int
+    date: str
+    points: float
+
+
+@dataclass
+class MatchResult:
+    round_num: int
+    date: str
+    opponent: str
+    us: float
+    them: float
+    note: str
+
+
+def _team_info_blocks(html: str):
+    """Yield (round_num, date, points, nested_match_table_or_None) for each
+    round on a team_info page. The page interleaves a 4-cell summary row per
+    round with a single-cell row holding that round's nested match-detail
+    table (opponent, A-vs-A/B-vs-B pairings) — see module docstring."""
+    soup = BeautifulSoup(html, "lxml")
+    outer = find_table_by_headers(soup, ["round date", "points"])
+    if outer is None:
+        raise RuntimeError(
+            "Couldn't find the team round-history table (looked for a header "
+            "row containing 'Round Date' and 'Points'). The page layout may "
+            "have changed — rerun with --dump-html and compare."
+        )
+    tbody = outer.find("tbody") or outer
+    pending = None
+    for tr in tbody.find_all("tr", recursive=False):
+        cells = tr.find_all(["td", "th"], recursive=False)
+        if len(cells) >= 4:
+            texts = [cell_text(c) for c in cells]
+            m = re.search(r"Round\s*(\d+)", texts[2])
+            pts = to_float(texts[3])
+            if m and pts is not None:
+                pending = (int(m.group(1)), texts[1], pts)
+            else:
+                pending = None
+            continue
+        if pending is None:
+            continue
+        yield pending[0], pending[1], pending[2], tr.find("table")
+        pending = None
+
+
+def parse_team_rounds(html: str) -> List[RoundResult]:
+    """Parse a team_info page's round-by-round points — the league's own
+    authoritative history for this team, not a diff-based reconstruction."""
+    out = [RoundResult(round_num=rn, date=date, points=pts)
+           for rn, date, pts, _ in _team_info_blocks(html)]
+    out.sort(key=lambda r: r.round_num)
+    return out
+
+
+def parse_team_matchups(html: str, watch_player: str) -> List[MatchResult]:
+    """Parse full per-round opponent/result detail for one team, with a
+    personal note for `watch_player` (W/L/T + score vs their individual
+    opponent), or a 'Sat out (sub: X)' note for rounds where a substitute
+    played in their place instead.
+
+    Identifying the substitute needs care: on a bye week BOTH names in that
+    round are "not watch_player" (the regular teammate AND the sub), so a
+    naive "whichever isn't watch_player" pick is a coin flip. This does two
+    passes — first finds the *regular* teammate by which non-watch_player
+    name recurs most across the season, then anyone else is the substitute.
+    """
+    from collections import Counter
+
+    parsed, teammate_counts = [], Counter()
+    for round_num, date, us_pts, nested in _team_info_blocks(html):
+        if nested is None:
+            continue
+        nrows = nested.find_all("tr")
+        if len(nrows) < 3:
+            continue
+        header = [cell_text(c) for c in nrows[0].find_all(["td", "th"])]
+        if len(header) < 4:
+            continue
+        team_a, team_b = header[1], header[3]
+
+        watch_row, us_names = None, []
+        for r in nrows[1:3]:
+            rc = [cell_text(c) for c in r.find_all(["td", "th"])]
+            if len(rc) < 5:
+                continue
+            us_names.append(rc[1])
+            if rc[1] == watch_player:
+                watch_row = rc
+        for n in us_names:
+            if n != watch_player:
+                teammate_counts[n] += 1
+        parsed.append((round_num, date, us_pts, team_a, team_b, watch_row, us_names))
+
+    regular_teammate = teammate_counts.most_common(1)[0][0] if teammate_counts else None
+
+    out = []
+    for round_num, date, us_pts, team_a, team_b, watch_row, us_names in parsed:
+        opponent = team_b if any(n in team_a for n in us_names) else team_a
+        them_pts = round(27 - us_pts, 2)  # league format: 27 pts split between the two teams each round
+
+        if watch_row:
+            my_pts, their_pts = to_float(watch_row[0]), to_float(watch_row[4])
+            result = "W" if my_pts > their_pts else "L" if my_pts < their_pts else "T"
+            note = f"{result} {my_pts:.1f}–{their_pts:.1f} vs {watch_row[3].split(',')[0].strip()}"
+        else:
+            sub = next((n for n in us_names if n != watch_player and n != regular_teammate), None)
+            if sub is None:
+                sub = next((n for n in us_names if n != watch_player), None)
+            note = f"Sat out (sub: {sub.split(',')[0].strip()})" if sub else "Sat out"
+
+        out.append(MatchResult(round_num=round_num, date=date, opponent=opponent.strip(),
+                                us=us_pts, them=them_pts, note=note))
+    out.sort(key=lambda r: r.round_num)
+    return out
+
+
+def fetch_team_history(client, league_id: str, page_id: str, team_id: str, teamset_id: str,
+                        sequence_id: Optional[str] = None, watch_player: Optional[str] = None):
+    """Fetch one team's full round-by-round history in a single request.
+    Returns (rounds, matchups) — matchups is [] if watch_player is None."""
+    params = {"team": team_id, "teamset": teamset_id}
+    if sequence_id:
+        params["sequence"] = sequence_id
+    url = client.widget_url(league_id, "team_standings/team_info", page_id, **params)
+    html = client.get(url, dump_name=f"team_info_{team_id}")
+    rounds = parse_team_rounds(html)
+    matchups = parse_team_matchups(html, watch_player) if watch_player else []
+    return rounds, matchups

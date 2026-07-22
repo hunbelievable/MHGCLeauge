@@ -2,7 +2,7 @@
 See fixtures_note.md — these prove the parsing logic is internally
 consistent, not that it matches Golf Genius's real HTML byte-for-byte.
 """
-from ggscrape.parsers.standings import parse_standings, parse_division_options
+from ggscrape.parsers.standings import parse_standings, parse_division_options, parse_team_rounds, parse_team_matchups
 from ggscrape.parsers.roster import parse_roster
 from ggscrape.parsers.player import parse_player
 
@@ -100,6 +100,54 @@ DIVISION_FORM_HTML = """
 """
 
 
+TEAM_INFO_HTML = """
+<table>
+<thead><tr><th></th><th>Round Date</th><th>Round Name</th><th>Points</th></tr></thead>
+<tbody>
+<tr><td>[+]</td><td>May 05, 2026</td><td>Round 2</td><td>18.00</td></tr>
+<tr><td>
+<table>
+<tr><td>Points</td><td>Phillips, Nick  +  Holiday, Rusty</td><td></td><td>Long, Mitchell  +  Pick, Connor</td><td>Points</td></tr>
+<tr><td>5.50</td><td>Holiday, Rusty</td><td>vs.</td><td>Long, Mitchell</td><td>3.50</td></tr>
+<tr><td>6.50</td><td>Phillips, Nick</td><td>vs.</td><td>Pick, Connor</td><td>2.50</td></tr>
+<tr><td>12.00</td><td></td><td>Totals</td><td></td><td>6.00</td></tr>
+<tr><td>Phillips, Nick  +  Holiday, Rusty vs Long, Mitchell  +  Pick, Connor</td><td>6.00</td></tr>
+<tr><td>6.00</td><td></td><td>Totals</td><td></td><td>3.00</td></tr>
+</table>
+</td></tr>
+<tr><td>[+]</td><td>Jun 16, 2026</td><td>Round 8</td><td>8.50</td></tr>
+<tr><td>
+<table>
+<tr><td>Points</td><td>Phillips, Nick  +  Stoakes, Gabe</td><td></td><td>Fricke, Jeff  +  Fries, Ryan</td><td>Points</td></tr>
+<tr><td>4.50</td><td>Phillips, Nick</td><td>vs.</td><td>Fries, Ryan</td><td>4.50</td></tr>
+<tr><td>2.00</td><td>Stoakes, Gabe</td><td>vs.</td><td>Fricke, Jeff</td><td>7.00</td></tr>
+<tr><td>6.50</td><td></td><td>Totals</td><td></td><td>11.50</td></tr>
+<tr><td>Fricke, Jeff  +  Fries, Ryan vs Phillips, Nick  +  Stoakes, Gabe</td><td>2.00</td></tr>
+<tr><td>2.00</td><td></td><td>Totals</td><td></td><td>7.00</td></tr>
+</table>
+</td></tr>
+</tbody>
+</table>
+"""
+
+
+def test_parse_team_rounds():
+    rounds = parse_team_rounds(TEAM_INFO_HTML)
+    assert [(r.round_num, r.points) for r in rounds] == [(2, 18.0), (8, 8.5)]
+
+
+def test_parse_team_matchups():
+    matchups = parse_team_matchups(TEAM_INFO_HTML, "Holiday, Rusty")
+    assert len(matchups) == 2
+    r2, r8 = matchups
+    assert r2.opponent == "Long, Mitchell + Pick, Connor"
+    assert r2.us == 18.0 and r2.them == 9.0
+    assert r2.note == "W 5.5–3.5 vs Long"
+    # Round 8: Rusty was subbed out for Stoakes — no individual row for him.
+    assert r8.opponent == "Fricke, Jeff + Fries, Ryan"
+    assert r8.note == "Sat out (sub: Stoakes)"
+
+
 def test_parse_division_options():
     opts = parse_division_options(DIVISION_FORM_HTML)
     assert opts.teamsets["Callaway Division/Teams"] == "12579376722559926027"
@@ -149,6 +197,8 @@ def test_player():
 if __name__ == "__main__":
     test_standings()
     test_parse_division_options()
+    test_parse_team_rounds()
+    test_parse_team_matchups()
     test_roster()
     test_player()
     print("ALL STRUCTURAL SMOKE TESTS PASSED")
