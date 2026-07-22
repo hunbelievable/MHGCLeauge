@@ -111,7 +111,7 @@ a{color:var(--blue)}
   </div>
   <div id="playoff-tit" style="display:none">
   <h2>Shootout Race — Titleist Division (current standings)</h2>
-  <p class="note">Week-by-week histories for Titleist teams aren't exposed on the public site pages I can reach, so this shows the current top of the division rather than a drop-2 projection. The gold line marks the top-7 cut as it stands today.</p>
+  <p class="note">Titleist standings are refreshed live each week, but week-by-week history isn't tracked yet (only the current snapshot), so this shows the current top of the division rather than a drop-2 projection. The gold line marks the top-7 cut as it stands today.</p>
   <div class="card"><table id="tbl-playoffs-tit"></table></div>
   </div>
   <h2>How the cut works</h2>
@@ -272,12 +272,8 @@ function standingsTableSimple(el, rows){
   el.innerHTML = `<thead><tr><th>#</th><th>Team</th><th class="num">Total Points</th></tr></thead><tbody>` +
     rows.map((r,i)=>`<tr${r[0]===ME.name?' class="me"':''}><td><span class="rankpill">${i+1}</span></td><td>${r[0]}</td><td class="num">${r[1].toFixed(1)}</td></tr>`).join('')+`</tbody>`;
 }
-function standingsTable4(el, rows){
-  el.innerHTML = `<thead><tr><th>#</th><th>Team</th><th class="num">Total</th><th class="num">AvA/BvB</th><th class="num">ABvAB</th></tr></thead><tbody>` +
-    rows.map((r,i)=>`<tr><td><span class="rankpill">${i+1}</span></td><td>${r[0]}</td><td class="num">${r[1].toFixed(1)}</td><td class="num">${r[2].toFixed(1)}</td><td class="num">${r[3].toFixed(1)}</td></tr>`).join('')+`</tbody>`;
-}
 standingsTableSimple(document.getElementById('tbl-cal'), DATA.standings.callaway);
-standingsTable4(document.getElementById('tbl-tit'), DATA.standings.titleist);
+standingsTableSimple(document.getElementById('tbl-tit'), DATA.standings.titleist);
 
 // ---- Division membership ----
 const CAL = new Set(DATA.standings.callaway.map(r=>r[0]));

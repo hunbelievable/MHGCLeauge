@@ -2,7 +2,7 @@
 See fixtures_note.md — these prove the parsing logic is internally
 consistent, not that it matches Golf Genius's real HTML byte-for-byte.
 """
-from ggscrape.parsers.standings import parse_standings
+from ggscrape.parsers.standings import parse_standings, parse_division_options
 from ggscrape.parsers.roster import parse_roster
 from ggscrape.parsers.player import parse_player
 
@@ -84,6 +84,30 @@ PLAYER_HTML = """
 """
 
 
+DIVISION_FORM_HTML = """
+<form action="https://mhgc-tuesdaynightleague.golfgenius.com/leagues/1/widgets/team_standings">
+<select name="teamset" id="teamset">
+<option value="">All Divisions/Teams</option>
+<option value="12541441646752988742">All Golfers/Teams</option>
+<option value="12579376722559926027" selected="selected">Callaway Division/Teams</option>
+<option value="12579377853042294540">Titleist Division/Teams</option>
+</select>
+<select name="sequence" id="sequence">
+<option value="12541420283719876603">All Rounds</option>
+<option value="12579391288941510322" selected="selected">Tue, May  5 - Tue, Aug 11</option>
+</select>
+</form>
+"""
+
+
+def test_parse_division_options():
+    opts = parse_division_options(DIVISION_FORM_HTML)
+    assert opts.teamsets["Callaway Division/Teams"] == "12579376722559926027"
+    assert opts.teamsets["Titleist Division/Teams"] == "12579377853042294540"
+    assert opts.default_sequence == "12579391288941510322"
+    assert opts.teamset_id("titleist") == "12579377853042294540"
+
+
 def test_standings():
     teams = parse_standings(STANDINGS_HTML)
     assert len(teams) == 2
@@ -124,6 +148,7 @@ def test_player():
 
 if __name__ == "__main__":
     test_standings()
+    test_parse_division_options()
     test_roster()
     test_player()
     print("ALL STRUCTURAL SMOKE TESTS PASSED")

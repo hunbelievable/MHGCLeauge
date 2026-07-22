@@ -12,5 +12,6 @@ node_modules/
 # OS cruft
 .DS_Store
 
-# Local Claude Code config (machine-specific permissions)
+# Local Claude Code runtime state (machine-specific)
 .claude/settings.local.json
+.claude/scheduled_tasks.lock

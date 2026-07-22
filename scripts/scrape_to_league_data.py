@@ -16,6 +16,7 @@ Usage:
 What this CAN derive from the site every run:
     - Callaway team standings, rank, and this round's points (by diffing
       each team's new total against its previous stored total)
+    - Titleist team standings (current snapshot — see note below)
     - the full player roster's season hole-outcome totals (playerStats)
     - full round-by-round scorecards for whichever players are already
       being tracked in playerDetail (or newly added via --add-player)
@@ -24,11 +25,15 @@ What it CANNOT derive, because no page ggscrape reads exposes it, and
 carries forward unchanged from the existing file instead:
     - myTeam.matchups' per-round opponent/result narrative (needs pairing
       and opponent-scorecard data no discovered page has)
-    - Titleist division standings and its week-by-week history (Titleist
-      isn't exposed the way Callaway is — see dashboard-template.html's
-      own note on the Playoffs tab)
     - meta.season config (scoringWeeks, dropCount, playoffSpots, ...) and
       meta.upcoming's schedule beyond what was already on file
+
+Note on Titleist: only the current snapshot (rank + total points) is
+refreshed each run, matching Callaway's simple standings table. Unlike
+Callaway, no week-by-week history is being accumulated for Titleist (that
+would need its own weekly-diff tracking + playoff-projection UI, which
+hasn't been built), so the Playoffs tab's Titleist view stays "top of
+division today" rather than a drop-2 projection.
 
 Run this after each week's round, skim the printed warnings, fill in the
 new myTeam.matchups entry by hand, then run build_dashboard.py.
@@ -48,14 +53,14 @@ ROOT = Path(__file__).resolve().parent.parent
 try:
     from ggscrape.fetch import Client
     from ggscrape.discover import discover
-    from ggscrape.parsers.standings import parse_standings
+    from ggscrape.parsers.standings import parse_standings, fetch_division_standings
     from ggscrape.parsers.roster import parse_roster
     from ggscrape.parsers.player import parse_player
 except ImportError:
     sys.path.insert(0, str(ROOT / "ggscrape"))
     from ggscrape.fetch import Client
     from ggscrape.discover import discover
-    from ggscrape.parsers.standings import parse_standings
+    from ggscrape.parsers.standings import parse_standings, fetch_division_standings
     from ggscrape.parsers.roster import parse_roster
     from ggscrape.parsers.player import parse_player
 
@@ -188,9 +193,13 @@ def main():
         data["latestRound"] = round_diffs
     data.pop("round13", None)  # old per-round-number key name; dashboard now reads "latestRound"
 
-    if "titleist" not in data.get("standings", {}):
+    # ---- Titleist standings (current snapshot only — no weekly history tracked) ----
+    try:
+        titleist_teams = fetch_division_standings(client, site.league_id, site.page_id("standing"), "Titleist")
+        data.setdefault("standings", {})["titleist"] = [[t.name, t.total_points] for t in titleist_teams]
+    except Exception as e:
+        warnings.append(f"Failed to fetch Titleist standings ({e}) — keeping previous snapshot.")
         data.setdefault("standings", {})["titleist"] = prev.get("standings", {}).get("titleist", [])
-    warnings.append("standings.titleist NOT refreshed — Titleist isn't exposed the way Callaway is (see dashboard-template.html's Playoffs-tab note). Carried forward unchanged.")
 
     # ---- myTeam ----
     my_name = prev["myTeam"]["name"]
@@ -253,6 +262,7 @@ def main():
             {"round": None, "date": None, "note": "No further scheduled rounds on file — add them to meta.upcoming"}
         )
     meta["lastUpdated"] = dt.date.today().isoformat()
+    meta["titleistAsOf"] = f"As of {meta['lastUpdated']} — current standings only, no week-by-week history tracked"
 
     out_text = json.dumps(data, indent=2) + "\n"
     if args.dry_run:
