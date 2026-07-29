@@ -5,6 +5,7 @@ consistent, not that it matches Golf Genius's real HTML byte-for-byte.
 from ggscrape.parsers.standings import parse_standings, parse_division_options, parse_team_rounds, parse_team_matchups
 from ggscrape.parsers.roster import parse_roster
 from ggscrape.parsers.player import parse_player
+from ggscrape.parsers.teesheet import parse_tee_sheet, parse_round_panel_options, match_teams_to_opponents
 
 STANDINGS_HTML = """
 <table>
@@ -219,6 +220,86 @@ def test_player():
     assert sum(by_round[3].holes) == 46
 
 
+TEE_SHEET_HTML = """
+<select name="widget_round_panel_selector">
+<option value="/widgets/next_round?round_id=111">Round 15 (Tue, August  4)</option>
+<option selected="selected" value="/widgets/next_round?round_id=222">Round 16 (Tue, August 11)</option>
+</select>
+<table>
+<tr class='search_rows hidden-xs'>
+<td> 5:30 PM</td><td>11A</td>
+<td>
+<div class='players_portrait'>Kellner, Allison  <span class='tee_abbr'></span><div class='division_and_flight'></div></div>
+<div class='clearfix'></div>
+<div class='players_portrait'>Schoneman, Greta  <span class='tee_abbr'></span><div class='division_and_flight'></div></div>
+<div class='clearfix'></div>
+<div class='players_portrait'>Holiday, Rusty  <span class='tee_abbr'></span><div class='division_and_flight'></div></div>
+<div class='clearfix'></div>
+<div class='players_portrait'>Phillips, Nick  <span class='tee_abbr'></span><div class='division_and_flight'></div></div>
+<div class='clearfix'></div>
+</td>
+<td> 5:30 PM</td><td>12</td>
+<td>
+<div class='players_portrait'>Rupe, Nick  <span class='tee_abbr'></span><div class='division_and_flight'></div></div>
+<div class='clearfix'></div>
+<div class='players_portrait'>Frost, Jerod  <span class='tee_abbr'></span><div class='division_and_flight'></div></div>
+<div class='clearfix'></div>
+<div class='players_portrait'>Deas, Ben  <span class='tee_abbr'></span><div class='division_and_flight'></div></div>
+<div class='clearfix'></div>
+<div class='players_portrait'>Lindell Jr., Ted  <span class='tee_abbr'></span><div class='division_and_flight'></div></div>
+<div class='clearfix'></div>
+</td>
+</tr>
+<tr class='search_rows visible-xs hidden-sm hidden-md hidden-lg'>
+<td> 5:30 PM</td><td>11A</td>
+<td>
+<div class='players_portrait'>Kellner, Allison  <span class='tee_abbr'></span><div class='division_and_flight'></div></div>
+<div class='clearfix'></div>
+<div class='players_portrait'>Schoneman, Greta  <span class='tee_abbr'></span><div class='division_and_flight'></div></div>
+<div class='clearfix'></div>
+<div class='players_portrait'>Holiday, Rusty  <span class='tee_abbr'></span><div class='division_and_flight'></div></div>
+<div class='clearfix'></div>
+<div class='players_portrait'>Phillips, Nick  <span class='tee_abbr'></span><div class='division_and_flight'></div></div>
+<div class='clearfix'></div>
+</td>
+</tr>
+</table>
+"""
+
+
+def test_parse_round_panel_options():
+    opts = parse_round_panel_options(TEE_SHEET_HTML)
+    assert [(o.round_num, o.date, o.round_id) for o in opts] == [
+        (15, "Tue, August 4", "111"),
+        (16, "Tue, August 11", "222"),
+    ]
+    assert opts[0].selected is False and opts[1].selected is True
+
+
+def test_parse_tee_sheet():
+    matches = parse_tee_sheet(TEE_SHEET_HTML)
+    # the visible-xs duplicate row must not double-count hole 11A
+    assert len(matches) == 2
+    by_hole = {m.hole: m for m in matches}
+    assert by_hole["11A"].team_a == ["Kellner, Allison", "Schoneman, Greta"]
+    assert by_hole["11A"].team_b == ["Holiday, Rusty", "Phillips, Nick"]
+    assert by_hole["12"].team_a == ["Rupe, Nick", "Frost, Jerod"]
+    assert by_hole["12"].team_b == ["Deas, Ben", "Lindell Jr., Ted"]
+
+
+def test_match_teams_to_opponents():
+    matches = parse_tee_sheet(TEE_SHEET_HTML)
+    team_members = {
+        "Kellner, Allison + Schoneman, Greta": ["Kellner, Allison", "Schoneman, Greta"],
+        "Phillips, Nick + Holiday, Rusty": ["Holiday, Rusty", "Phillips, Nick"],
+        "Frost, Jerod + Rupe, Nick": ["Rupe, Nick", "Frost, Jerod"],
+        "Deas, Ben + Lindell Jr., Ted": ["Deas, Ben", "Lindell Jr., Ted"],
+    }
+    opp = match_teams_to_opponents(matches, team_members)
+    assert opp["Phillips, Nick + Holiday, Rusty"] == "Kellner, Allison + Schoneman, Greta"
+    assert opp["Frost, Jerod + Rupe, Nick"] == "Deas, Ben + Lindell Jr., Ted"
+
+
 if __name__ == "__main__":
     test_standings()
     test_parse_division_options()
@@ -226,4 +307,7 @@ if __name__ == "__main__":
     test_parse_team_matchups()
     test_roster()
     test_player()
+    test_parse_round_panel_options()
+    test_parse_tee_sheet()
+    test_match_teams_to_opponents()
     print("ALL STRUCTURAL SMOKE TESTS PASSED")

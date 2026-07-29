@@ -118,6 +118,7 @@ a{color:var(--blue)}
   <div class="card" style="font-size:.9rem;line-height:1.6">
     <p>The season runs 15 scoring weeks (Rounds 2–16, May 5 – Aug 11). Golf Genius keeps each team's <b>best 13 of 15</b> weekly point totals — the two lowest weeks are dropped. The <b>top 7 teams in each division</b> after drops advance to the shootout on <b>Tue, August 18</b> (true alternate shot, 2 teams eliminated every 2 holes, division winners meet in a 3-hole aggregate final).</p>
     <p style="margin-top:8px;color:var(--muted)">Projection method: each team's remaining rounds are assumed at their current weekly average, then the best 13 of the resulting 15 weeks are summed. "If drops applied today" simply removes each team's two worst weeks so far.</p>
+    <p style="margin-top:8px;color:var(--muted)"><b>Callaway status/odds:</b> Clinched/Eliminated is exact — a team is Clinched once fewer than 7 rivals could still catch its worst-case finish (0 pts every remaining week), and Eliminated once 7+ rivals are guaranteed to finish ahead even of its best-case finish (27 pts every remaining week). Bubble teams get a simulated playoff-odds estimate instead of a guarantee: 3,000 trials, each remaining week resampled from that team's own historical weekly scores.</p>
   </div>
 </section>
 
@@ -380,15 +381,82 @@ const projFor = div => div==='tit' ? PROJ_TIT_BY_TEAM : PROJ_BY_TEAM;
 const cutFor = div => div==='tit' ? CUT_TIT : CUT;
 const TIT_WEEKS_TRACKED = Object.values(DATA.titleistWeekly||{}).reduce((m,w)=>Math.max(m,w.length), 0);
 
-function renderShootoutTable(tblId, proj, cut){
+// ---- Clinched / eliminated / bubble — Callaway only (by request). Standard
+// sports-elimination bound: worst case for a team is 0 pts in every
+// remaining week, best case is the 27-pt max every remaining week. A team
+// clinches a top-N spot if fewer than N rivals could still finish ahead of
+// its worst case; it's eliminated if N or more rivals are guaranteed to
+// finish ahead of even its best case. Each team's own remaining weeks are
+// treated independently (same simplification the projection above already
+// makes), not modeling that two of our teams could be each other's
+// opponent in a remaining week. ----
+function bestSum(arr, dropCount){
+  return [...arr].sort((a,b)=>a-b).slice(dropCount).reduce((a,b)=>a+b,0);
+}
+function computePlayoffStatus(weeklyMap){
+  const S = M.season, remain = Math.max(0, S.scoringWeeks - S.playedWeeks), K = S.playoffSpots;
+  const bounds = Object.entries(weeklyMap).map(([team, wk])=>({
+    team,
+    worst: bestSum([...wk, ...Array(remain).fill(0)], S.dropCount),
+    best: bestSum([...wk, ...Array(remain).fill(S.weeklyMax)], S.dropCount),
+  }));
+  const status = {};
+  for (const t of bounds){
+    const others = bounds.filter(o=>o.team!==t.team);
+    const couldPassMe = others.filter(o=>o.best > t.worst).length;
+    const guaranteedAheadOfMe = others.filter(o=>o.worst > t.best).length;
+    status[t.team] = remain===0 ? 'final' : couldPassMe < K ? 'clinched' : guaranteedAheadOfMe >= K ? 'eliminated' : 'bubble';
+  }
+  return status;
+}
+
+// ---- Playoff odds (Monte Carlo) — Callaway only. Each remaining week is
+// bootstrapped from the team's OWN historical weekly scores (sampled with
+// replacement), not a league-wide average, so a streaky or consistent team
+// gets a distribution shaped like its actual season. Repeated over many
+// trials and ranked each time to estimate P(finish top 7). ----
+function simulatePlayoffOdds(weeklyMap, trials){
+  const S = M.season, remain = Math.max(0, S.scoringWeeks - S.playedWeeks), K = S.playoffSpots;
+  const teams = Object.keys(weeklyMap);
+  if (remain === 0){
+    const final = computeProjections(weeklyMap).map(r=>r.team);
+    const inSet = new Set(final.slice(0, K));
+    return Object.fromEntries(teams.map(t=>[t, inSet.has(t)?100:0]));
+  }
+  const counts = Object.fromEntries(teams.map(t=>[t,0]));
+  for (let i=0;i<trials;i++){
+    const finals = teams.map(team=>{
+      const wk = weeklyMap[team];
+      const sampled = Array.from({length:remain}, ()=>wk[Math.floor(Math.random()*wk.length)]);
+      return {team, final: bestSum([...wk, ...sampled], S.dropCount)};
+    });
+    finals.sort((a,b)=>b.final-a.final);
+    for (let r=0;r<Math.min(K,finals.length);r++) counts[finals[r].team]++;
+  }
+  const odds = {};
+  teams.forEach(t=>odds[t] = 100*counts[t]/trials);
+  return odds;
+}
+const CAL_STATUS = computePlayoffStatus(DATA.callawayWeekly);
+const CAL_ODDS = simulatePlayoffOdds(DATA.callawayWeekly, 3000);
+const STATUS_LABEL = {clinched:'Clinched', eliminated:'Eliminated', bubble:'Bubble', final:'Final'};
+
+function renderShootoutTable(tblId, proj, cut, extra){
   const S = M.season;
+  const headExtra = extra ? `<th>Status</th><th class="num">Playoff Odds</th>` : '';
   document.getElementById(tblId).innerHTML =
-    `<thead><tr><th>Proj #</th><th>Team</th><th class="num">Current</th><th class="num">Avg/wk</th><th class="num">Drop weeks</th><th class="num">If drops applied today</th><th class="num">Projected final (13 of 15)</th><th class="num">vs cut</th></tr></thead><tbody>`+
+    `<thead><tr><th>Proj #</th><th>Team</th><th class="num">Current</th><th class="num">Avg/wk</th><th class="num">Drop weeks</th><th class="num">If drops applied today</th><th class="num">Projected final (13 of 15)</th><th class="num">vs cut</th>${headExtra}</tr></thead><tbody>`+
     proj.map((r,i)=>{
       const d = r.proj - cut;
       const cls = r.team===currentTeam?' class="me"':'';
       const cutRow = i===S.playoffSpots-1 ? ' style="border-bottom:2px solid var(--gold)"' : '';
-      return `<tr${cls}${cutRow}><td><span class="rankpill">${i+1}</span></td><td>${r.team}${i<S.playoffSpots?' <span title="projected in" style="color:var(--gold)">★</span>':''}</td><td class="num">${r.total.toFixed(1)}</td><td class="num">${r.avg.toFixed(1)}</td><td class="num" style="color:var(--muted)">${r.drops.map(x=>x.toFixed(1)).join(', ')}</td><td class="num">${r.drop2now.toFixed(1)}</td><td class="num"><b>${r.proj.toFixed(1)}</b></td><td class="num ${d>=0?'w':'l'}">${d>=0?'+':''}${d.toFixed(1)}</td></tr>`;
+      let extraCells = '';
+      if (extra){
+        const st = extra.status[r.team], oddsPct = extra.odds[r.team];
+        const stCls = st==='clinched'?'w':st==='eliminated'?'l':'t';
+        extraCells = `<td class="${stCls}">${STATUS_LABEL[st]||st}</td><td class="num">${oddsPct.toFixed(0)}%</td>`;
+      }
+      return `<tr${cls}${cutRow}><td><span class="rankpill">${i+1}</span></td><td>${r.team}${i<S.playoffSpots?' <span title="projected in" style="color:var(--gold)">★</span>':''}</td><td class="num">${r.total.toFixed(1)}</td><td class="num">${r.avg.toFixed(1)}</td><td class="num" style="color:var(--muted)">${r.drops.map(x=>x.toFixed(1)).join(', ')}</td><td class="num">${r.drop2now.toFixed(1)}</td><td class="num"><b>${r.proj.toFixed(1)}</b></td><td class="num ${d>=0?'w':'l'}">${d>=0?'+':''}${d.toFixed(1)}</td>${extraCells}</tr>`;
     }).join('')+`</tbody>`;
 }
 
@@ -403,14 +471,21 @@ function renderPlayoffSummary(){
     return;
   }
   const cut = cutFor(t.division), inOut = p.projRank <= M.season.playoffSpots ? 'projected IN' : 'projected OUT';
-  el.innerHTML = `<b>${currentTeam}</b> (${DIVNAME[t.division]}) — <b>${inOut}</b> the shootout, projected ${ordinal(p.projRank)} at ${p.proj.toFixed(1)} pts after drops (cut ≈ ${cut.toFixed(1)}). Drop weeks so far: ${p.drops.map(d=>d.toFixed(1)).join(' and ')}.`;
+  let statusNote = '';
+  if (t.division === 'cal'){
+    const st = CAL_STATUS[currentTeam], oddsPct = CAL_ODDS[currentTeam];
+    if (st === 'clinched') statusNote = ` <b style="color:var(--green)">Clinched</b> — no result the rest of the way can push it out of the top ${M.season.playoffSpots}.`;
+    else if (st === 'eliminated') statusNote = ` <b style="color:var(--red)">Eliminated</b> — mathematically out, even at a perfect finish.`;
+    else statusNote = ` On the <b>bubble</b> — simulated playoff odds ≈ <b>${oddsPct.toFixed(0)}%</b>, bootstrapped from this team's own weekly scores.`;
+  }
+  el.innerHTML = `<b>${currentTeam}</b> (${DIVNAME[t.division]}) — <b>${inOut}</b> the shootout, projected ${ordinal(p.projRank)} at ${p.proj.toFixed(1)} pts after drops (cut ≈ ${cut.toFixed(1)}). Drop weeks so far: ${p.drops.map(d=>d.toFixed(1)).join(' and ')}.${statusNote}`;
 }
 
 function renderPlayoffsCallaway(){
   const S = M.season, remain = S.scoringWeeks - S.playedWeeks;
   document.getElementById('playoff-note').textContent =
-    `${S.playedWeeks} of ${S.scoringWeeks} scoring weeks played, ${remain} to go. Top ${S.playoffSpots} after drops advance to the ${S.shootoutDate} shootout.`;
-  renderShootoutTable('tbl-playoffs', PROJ, CUT);
+    `${S.playedWeeks} of ${S.scoringWeeks} scoring weeks played, ${remain} to go. Top ${S.playoffSpots} after drops advance to the ${S.shootoutDate} shootout. Status and playoff odds below are exact math (clinched/eliminated) plus a ${3000}-trial simulation bootstrapped from each team's own weekly scores (bubble teams).`;
+  renderShootoutTable('tbl-playoffs', PROJ, CUT, {status: CAL_STATUS, odds: CAL_ODDS});
 }
 renderPlayoffsCallaway();
 wirePills('playoff-pills', d => {
@@ -550,11 +625,20 @@ function renderTeam(){
         return `<tr><td>${divRl[i].join(' · ')}</td><td class="num">${v.toFixed(1)}</td><td class="${cls}">${d>=0?'+':''}${d.toFixed(1)}</td></tr>`;
       }).join('')+`</tbody>`;
   }
+
+  renderUpcoming();
 }
 
-document.getElementById('tbl-upcoming').innerHTML =
-  `<thead><tr><th>Round</th><th>Date</th></tr></thead><tbody>`+
-  M.upcoming.map(u=>`<tr><td>${u.round}</td><td>${u.date}</td></tr>`).join('')+`</tbody>`;
+// Opponents are only scraped for Callaway (from the site's Tee Sheet, ahead
+// of results posting) — Titleist falls back to the plain round/date list.
+function renderUpcoming(){
+  const t = teamByName[currentTeam];
+  const withOpp = t.division === 'cal' && t.upcoming && t.upcoming.length > 0;
+  const rows = withOpp ? t.upcoming : M.upcoming;
+  document.getElementById('tbl-upcoming').innerHTML =
+    `<thead><tr><th>Round</th><th>Date</th>${withOpp ? '<th>Opponent</th>' : ''}</tr></thead><tbody>`+
+    rows.map(u=>`<tr><td>${u.round}</td><td>${u.date}</td>${withOpp ? `<td>${u.opp || '<span style="color:var(--muted)">TBD</span>'}</td>` : ''}</tr>`).join('')+`</tbody>`;
+}
 
 // ---- Player tab (pivotable, both divisions) ----
 function playerOptionsHTML(withStar){
@@ -714,7 +798,7 @@ function setTeam(name){
   renderBannerTeam(name);
   renderStandings();
   renderPlayoffSummary();
-  renderShootoutTable('tbl-playoffs', PROJ, CUT);
+  renderShootoutTable('tbl-playoffs', PROJ, CUT, {status: CAL_STATUS, odds: CAL_ODDS});
   if (TIT_WEEKS_TRACKED > 0) renderShootoutTable('tbl-playoffs-tit', PROJ_TIT, CUT_TIT);
   renderRace();
   renderTeam();

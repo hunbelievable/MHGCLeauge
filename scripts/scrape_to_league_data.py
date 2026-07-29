@@ -62,6 +62,9 @@ try:
     )
     from ggscrape.parsers.roster import parse_roster
     from ggscrape.parsers.player import parse_player
+    from ggscrape.parsers.teesheet import (
+        parse_tee_sheet, parse_round_panel_options, fetch_tee_sheet_html, match_teams_to_opponents,
+    )
 except ImportError:
     sys.path.insert(0, str(ROOT / "ggscrape"))
     from ggscrape.fetch import Client
@@ -71,6 +74,9 @@ except ImportError:
     )
     from ggscrape.parsers.roster import parse_roster
     from ggscrape.parsers.player import parse_player
+    from ggscrape.parsers.teesheet import (
+        parse_tee_sheet, parse_round_panel_options, fetch_tee_sheet_html, match_teams_to_opponents,
+    )
 
 DEFAULT_BASE_URL = "https://mhgc-tuesdaynightleague.golfgenius.com"
 MONTH_FULL = {m[:3]: m for m in [
@@ -283,6 +289,35 @@ def main():
             data["latestRoundTitleist"] = latest_round_leaderboard(tit_rows)
 
     data.pop("round13", None)  # old per-round-number key name; dashboard now reads "latestRound"
+
+    # ---- Callaway-only: who each team plays over the next two rounds, from
+    # the Tee Sheet (`next_round` widget) — the site posts pairings a week or
+    # two before results exist, so this can't come from team_info history.
+    # Titleist is deliberately skipped here (scoped to Callaway by request). ----
+    try:
+        tee_pid = site.page_id("tee sheet")
+        base_tee_html = fetch_tee_sheet_html(client, site.league_id, tee_pid)
+        round_opts = parse_round_panel_options(base_tee_html)
+        m = re.search(r"Round\s*(\d+)", data["meta"].get("throughRound", ""))
+        current_round_num = int(m.group(1)) if m else 0
+        next_opts = sorted((o for o in round_opts if o.round_num > current_round_num),
+                            key=lambda o: o.round_num)[:2]
+
+        team_members = {t.name: t.members for t in live_cal + live_tit}
+        upcoming_by_team = {t["name"]: [] for t in data["teams"]}
+        for opt in next_opts:
+            html = base_tee_html if opt.selected else fetch_tee_sheet_html(client, site.league_id, tee_pid, opt.round_id)
+            opp_map = match_teams_to_opponents(parse_tee_sheet(html), team_members)
+            for t in data["teams"]:
+                upcoming_by_team[t["name"]].append({
+                    "round": f"Round {opt.round_num}", "date": opt.date,
+                    "opp": opp_map.get(t["name"]),
+                })
+        for t in data["teams"]:
+            t["upcoming"] = upcoming_by_team[t["name"]]
+    except Exception as e:
+        warnings.append(f"Failed to fetch upcoming Callaway tee-sheet opponents ({e}) — "
+                         f"Callaway teams' Upcoming Rounds will fall back to round/date only this refresh.")
 
     # ---- roster -> playerStats ----
     roster_url = client.widget_url(site.league_id, "player_stats", site.page_id("player stat"))
