@@ -126,6 +126,20 @@ TEAM_INFO_HTML = """
 <tr><td>2.00</td><td></td><td>Totals</td><td></td><td>7.00</td></tr>
 </table>
 </td></tr>
+<tr><td>[+]</td><td>Jul 28, 2026</td><td>Round 14</td><td>15.50</td></tr>
+<tr><td>
+<table>
+<!-- Real site behavior: some rounds put the team-total block FIRST,
+     reversed from every other round above. A position-based parser
+     (assuming row 0 is always the header) silently drops these. -->
+<tr><td>Phillips, Nick  +  Holiday, Rusty vs Smith, Nick  +  Hand, Hunter</td><td>5.00</td></tr>
+<tr><td>5.00</td><td></td><td>Totals</td><td></td><td>4.00</td></tr>
+<tr><td>Points</td><td>Phillips, Nick  +  Holiday, Rusty</td><td></td><td>Smith, Nick  +  Hand, Hunter</td><td>Points</td></tr>
+<tr><td>6.00</td><td>Phillips, Nick</td><td>vs.</td><td>Hand, Hunter</td><td>3.00</td></tr>
+<tr><td>4.50</td><td>Holiday, Rusty</td><td>vs.</td><td>Smith, Nick</td><td>4.50</td></tr>
+<tr><td>10.50</td><td></td><td>Totals</td><td></td><td>7.50</td></tr>
+</table>
+</td></tr>
 </tbody>
 </table>
 """
@@ -133,13 +147,13 @@ TEAM_INFO_HTML = """
 
 def test_parse_team_rounds():
     rounds = parse_team_rounds(TEAM_INFO_HTML)
-    assert [(r.round_num, r.points) for r in rounds] == [(2, 18.0), (8, 8.5)]
+    assert [(r.round_num, r.points) for r in rounds] == [(2, 18.0), (8, 8.5), (14, 15.5)]
 
 
 def test_parse_team_matchups():
     matchups = parse_team_matchups(TEAM_INFO_HTML)
-    assert len(matchups) == 2
-    r2, r8 = matchups
+    assert len(matchups) == 3
+    r2, r8, r14 = matchups
     assert r2.opponent == "Long, Mitchell + Pick, Connor"
     assert r2.us == 18.0 and r2.them == 9.0
     assert len(r2.pairings) == 2
@@ -151,6 +165,12 @@ def test_parse_team_matchups():
     # actually played, no single "watched" player assumed.
     assert r8.opponent == "Fricke, Jeff + Fries, Ryan"
     assert {p.player for p in r8.pairings} == {"Phillips, Nick", "Stoakes, Gabe"}
+    # Round 14: team-total block appears BEFORE the header/pairings block
+    # (reversed row order) — must still be found correctly, not skipped.
+    assert r14.opponent == "Smith, Nick + Hand, Hunter"
+    assert r14.us == 15.5 and r14.them == 11.5
+    assert len(r14.pairings) == 2
+    assert {p.player for p in r14.pairings} == {"Phillips, Nick", "Holiday, Rusty"}
 
 
 def test_parse_division_options():

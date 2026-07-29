@@ -222,27 +222,33 @@ def parse_team_matchups(html: str) -> List[MatchResult]:
     name, team-level us/them points, and both individual A-vs-A/B-vs-B
     pairings — whoever actually played that round, subs included, with no
     single "watched" player assumed. Works identically for any team, so
-    every team gets the same detail (not just one favorite)."""
+    every team gets the same detail (not just one favorite).
+
+    The nested per-round table's row order isn't fixed — most rounds put
+    the header (`Points | teamA | | teamB | Points`) first and the two
+    individual-pairing rows right after it, but some rounds (seemingly
+    whichever team is "away" that week) put the team-total block first
+    instead. Assuming a fixed position silently drops those rounds, so this
+    scans every row and identifies header/pairing rows by shape instead of
+    position: a pairing row always has 5 cells with cells[2] == 'vs.'; the
+    header row always has 5 cells starting with 'Points'.
+    """
     out = []
     for round_num, date, us_pts, nested in _team_info_blocks(html):
         if nested is None:
             continue
-        nrows = nested.find_all("tr")
-        if len(nrows) < 3:
-            continue
-        header = [cell_text(c) for c in nrows[0].find_all(["td", "th"])]
-        if len(header) < 4:
+        header, pairings, us_names = None, [], []
+        for r in nested.find_all("tr"):
+            cells = [cell_text(c) for c in r.find_all(["td", "th"])]
+            if len(cells) == 5 and cells[2].strip().lower() == "vs.":
+                us_names.append(cells[1])
+                pairings.append(Pairing(player=cells[1], opponent=cells[3], us=to_float(cells[0]), them=to_float(cells[4])))
+            elif len(cells) == 5 and cells[0].strip().lower() == "points" and header is None:
+                header = cells
+
+        if header is None or not pairings:
             continue
         team_a, team_b = header[1], header[3]
-
-        pairings, us_names = [], []
-        for r in nrows[1:3]:
-            rc = [cell_text(c) for c in r.find_all(["td", "th"])]
-            if len(rc) < 5:
-                continue
-            us_names.append(rc[1])
-            pairings.append(Pairing(player=rc[1], opponent=rc[3], us=to_float(rc[0]), them=to_float(rc[4])))
-
         opponent = team_b if any(n in team_a for n in us_names) else team_a
         them_pts = round(27 - us_pts, 2)  # league format: 27 pts split between the two teams each round
 
