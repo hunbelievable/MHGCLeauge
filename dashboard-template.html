@@ -470,21 +470,26 @@ function renderPlayoffSummary(){
     el.innerHTML = `<b>${currentTeam}</b> (${DIVNAME[t.division]}) — no weekly history on file yet for a shootout projection.`;
     return;
   }
-  const cut = cutFor(t.division), inOut = p.projRank <= M.season.playoffSpots ? 'projected IN' : 'projected OUT';
+  const cut = cutFor(t.division), seasonDone = M.season.scoringWeeks - M.season.playedWeeks <= 0;
+  const inOut = seasonDone ? (p.projRank <= M.season.playoffSpots ? 'made' : 'missed') : (p.projRank <= M.season.playoffSpots ? 'projected IN' : 'projected OUT');
   let statusNote = '';
   if (t.division === 'cal'){
     const st = CAL_STATUS[currentTeam], oddsPct = CAL_ODDS[currentTeam];
     if (st === 'clinched') statusNote = ` <b style="color:var(--green)">Clinched</b> — no result the rest of the way can push it out of the top ${M.season.playoffSpots}.`;
     else if (st === 'eliminated') statusNote = ` <b style="color:var(--red)">Eliminated</b> — mathematically out, even at a perfect finish.`;
+    else if (st === 'final') statusNote = ''; // season's over — the IN/missed wording above already says it plainly
     else statusNote = ` On the <b>bubble</b> — simulated playoff odds ≈ <b>${oddsPct.toFixed(0)}%</b>, bootstrapped from this team's own weekly scores.`;
   }
-  el.innerHTML = `<b>${currentTeam}</b> (${DIVNAME[t.division]}) — <b>${inOut}</b> the shootout, projected ${ordinal(p.projRank)} at ${p.proj.toFixed(1)} pts after drops (cut ≈ ${cut.toFixed(1)}). Drop weeks so far: ${p.drops.map(d=>d.toFixed(1)).join(' and ')}.${statusNote}`;
+  el.innerHTML = seasonDone
+    ? `<b>${currentTeam}</b> (${DIVNAME[t.division]}) — <b>${inOut} the shootout</b>, finished ${ordinal(p.projRank)} at ${p.proj.toFixed(1)} pts after drops (cut = ${cut.toFixed(1)}). Drop weeks: ${p.drops.map(d=>d.toFixed(1)).join(' and ')}.${statusNote}`
+    : `<b>${currentTeam}</b> (${DIVNAME[t.division]}) — <b>${inOut}</b> the shootout, projected ${ordinal(p.projRank)} at ${p.proj.toFixed(1)} pts after drops (cut ≈ ${cut.toFixed(1)}). Drop weeks so far: ${p.drops.map(d=>d.toFixed(1)).join(' and ')}.${statusNote}`;
 }
 
 function renderPlayoffsCallaway(){
   const S = M.season, remain = S.scoringWeeks - S.playedWeeks;
-  document.getElementById('playoff-note').textContent =
-    `${S.playedWeeks} of ${S.scoringWeeks} scoring weeks played, ${remain} to go. Top ${S.playoffSpots} after drops advance to the ${S.shootoutDate} shootout. Status and playoff odds below are exact math (clinched/eliminated) plus a ${3000}-trial simulation bootstrapped from each team's own weekly scores (bubble teams).`;
+  document.getElementById('playoff-note').textContent = remain <= 0
+    ? `Regular season complete — final standings below. Top ${S.playoffSpots} after drops advance to the ${S.shootoutDate} shootout.`
+    : `${S.playedWeeks} of ${S.scoringWeeks} scoring weeks played, ${remain} to go. Top ${S.playoffSpots} after drops advance to the ${S.shootoutDate} shootout. Status and playoff odds below are exact math (clinched/eliminated) plus a ${3000}-trial simulation bootstrapped from each team's own weekly scores (bubble teams).`;
   renderShootoutTable('tbl-playoffs', PROJ, CUT, {status: CAL_STATUS, odds: CAL_ODDS});
 }
 renderPlayoffsCallaway();
@@ -512,8 +517,9 @@ function renderPlayoffsTitleist(){
       }).join('')+`</tbody>`;
   } else {
     document.getElementById('playoff-tit-h').textContent = 'Shootout Projection — Titleist Division';
-    document.getElementById('playoff-tit-note').textContent =
-      `${S.playedWeeks} of ${S.scoringWeeks} scoring weeks played, ${remain} to go. Top ${S.playoffSpots} after drops advance to the ${S.shootoutDate} shootout.`;
+    document.getElementById('playoff-tit-note').textContent = remain <= 0
+      ? `Regular season complete — final standings below. Top ${S.playoffSpots} after drops advance to the ${S.shootoutDate} shootout.`
+      : `${S.playedWeeks} of ${S.scoringWeeks} scoring weeks played, ${remain} to go. Top ${S.playoffSpots} after drops advance to the ${S.shootoutDate} shootout.`;
     renderShootoutTable('tbl-playoffs-tit', PROJ_TIT, CUT_TIT);
   }
 }
